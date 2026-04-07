@@ -943,15 +943,12 @@ function Sidebar({page,setPage,patients,appointments,recalls,messages,onSignOut}
   const pendingR=Object.values(recalls).filter(r=>r.status==="Pending").length;
   return(
     <aside style={{width:224,background:T.sidebar,display:"flex",flexDirection:"column",flexShrink:0,height:"100vh",position:"sticky",top:0,overflowY:"auto",backgroundImage:TOOTH,backgroundSize:"60px 60px"}}>
-      <div style={{padding:"24px 20px 18px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          <img
-            src="/logo.png"
-            alt="Lifedent Dental Clinic"
-            style={{height:48,width:"auto",objectFit:"contain",filter:"brightness(0) invert(1)"}}
-          />
-          <div style={{color:T.gold+"99",fontSize:10,fontFamily:"Sora",letterSpacing:"0.06em",paddingLeft:2}}>Clinic CRM</div>
-        </div>
+      <div style={{padding:"18px 16px 16px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+        <img
+          src="/logo.png"
+          alt="Lifedent Dental Clinic"
+          style={{width:"100%",height:"auto",objectFit:"contain",filter:"brightness(0) invert(1)"}}
+        />
       </div>
       <nav style={{padding:"13px 10px",flex:1}}>
         {NAV.map(n=>{
