@@ -521,7 +521,7 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
             :<div style={{display:"flex",flexDirection:"column",gap:14}}>
               <div><Inp label="Full Name *" value={name} onChange={e=>{setName(e.target.value);setErrors(v=>({...v,name:null}));}} placeholder="e.g. Sara Mohamed"/>{errors.name&&<div style={{color:T.red,fontSize:12,marginTop:4}}>{errors.name}</div>}</div>
               <div><Inp label="Phone *" value={phone} onChange={e=>{setPhone(e.target.value);setErrors(v=>({...v,phone:null}));}} placeholder="01012345678"/>{errors.phone&&<div style={{color:T.red,fontSize:12,marginTop:4}}>{errors.phone}</div>}{phone&&<div style={{fontSize:11,color:T.muted,marginTop:4}}>WhatsApp → {toWA(phone)}</div>}</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}}>
                 <Inp label="Age (optional)" type="number" value={age} onChange={e=>setAge(e.target.value)} placeholder="35"/>
                 <Sel label="Gender (optional)" value={gender} onChange={e=>setGender(e.target.value)}>
                   <option value="">—</option>
@@ -535,7 +535,7 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
         <Card style={{padding:"24px 26px"}}>
           <H size={18} style={{marginBottom:16}}>Appointment Details</H>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}}>
               <Inp label="Date" type="date" value={apDate} onChange={e=>setApDate(e.target.value)}/>
               <Inp label="Time" type="time" value={apTime} onChange={e=>setApTime(e.target.value)}/>
             </div>
@@ -943,12 +943,14 @@ function Sidebar({page,setPage,patients,appointments,recalls,messages,onSignOut}
   const pendingR=Object.values(recalls).filter(r=>r.status==="Pending").length;
   return(
     <aside style={{width:224,background:T.sidebar,display:"flex",flexDirection:"column",flexShrink:0,height:"100vh",position:"sticky",top:0,overflowY:"auto",backgroundImage:TOOTH,backgroundSize:"60px 60px"}}>
-      <div style={{padding:"18px 16px 16px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
-        <img
-          src="/logo.png"
-          alt="Lifedent Dental Clinic"
-          style={{width:"100%",height:"auto",objectFit:"contain",filter:"brightness(0) invert(1)"}}
-        />
+      <div style={{padding:"24px 20px 18px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:11}}>
+          <div style={{width:40,height:40,borderRadius:12,background:`linear-gradient(135deg,${T.gold},${T.goldL})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:21,boxShadow:`0 4px 16px ${T.gold}50`}}>🦷</div>
+          <div>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",color:"#F0EDE6",fontSize:18,fontWeight:600,lineHeight:1}}>Lifedent</div>
+            <div style={{color:T.gold+"99",fontSize:10,marginTop:3,fontFamily:"Sora",letterSpacing:"0.05em"}}>Clinic CRM</div>
+          </div>
+        </div>
       </div>
       <nav style={{padding:"13px 10px",flex:1}}>
         {NAV.map(n=>{

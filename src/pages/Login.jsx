@@ -1,5 +1,5 @@
 // src/pages/Login.jsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { signIn } from "../lib/db";
 
 const T = {
@@ -16,6 +16,13 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState("");
+  const [mobile,   setMobile]   = useState(() => window.innerWidth < 768);
+
+  useEffect(() => {
+    const fn = () => setMobile(window.innerWidth < 768);
+    window.addEventListener("resize", fn);
+    return () => window.removeEventListener("resize", fn);
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -23,7 +30,6 @@ export default function Login() {
     setLoading(true);
     try {
       await signIn(email.trim(), password);
-      // AuthProvider listener handles redirect
     } catch (err) {
       setError(err.message || "Invalid email or password");
     } finally {
@@ -31,27 +37,103 @@ export default function Login() {
     }
   };
 
-  return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "'Sora', sans-serif" }}>
-      {/* Left panel — brand */}
-      <div style={{ width: 420, background: T.sidebar, backgroundImage: TOOTH,
-        backgroundSize: "60px 60px", display: "flex", flexDirection: "column",
-        justifyContent: "center", padding: "60px 52px", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 48 }}>
-          <div style={{ width: 52, height: 52, borderRadius: 16,
-            background: `linear-gradient(135deg, ${T.gold}, ${T.goldL})`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 26, boxShadow: `0 4px 20px ${T.gold}50` }}>🦷</div>
-          <div>
-            <div style={{ fontFamily: "'Cormorant Garamond', serif", color: "#F0EDE6",
-              fontSize: 26, fontWeight: 600, lineHeight: 1 }}>LifeDent</div>
-            <div style={{ color: T.gold + "99", fontSize: 12, marginTop: 4,
-              letterSpacing: "0.05em" }}>Clinic Management System</div>
+  // ── Mobile layout ────────────────────────────────────────────────────────
+  if (mobile) {
+    return (
+      <div style={{ minHeight: "100vh", fontFamily: "'Sora', sans-serif",
+        background: T.sidebar, backgroundImage: TOOTH, backgroundSize: "60px 60px",
+        display: "flex", flexDirection: "column" }}>
+
+        {/* Top brand bar */}
+        <div style={{ padding: "48px 28px 32px", textAlign: "center" }}>
+          <img src="/logo.png" alt="Lifedent"
+            style={{ height: 56, width: "auto", objectFit: "contain",
+              filter: "brightness(0) invert(1)", marginBottom: 16 }} />
+          <div style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic",
+            fontSize: 20, color: "rgba(255,255,255,0.6)", lineHeight: 1.4 }}>
+            The clinic experience,<br/>beautifully managed.
           </div>
         </div>
 
+        {/* Form card */}
+        <div style={{ flex: 1, background: T.bg, borderRadius: "24px 24px 0 0",
+          padding: "36px 24px 40px", display: "flex", flexDirection: "column" }}>
+
+          <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 30,
+            fontWeight: 600, color: T.text, marginBottom: 6 }}>Welcome back</div>
+          <div style={{ color: T.muted, fontSize: 14, marginBottom: 28 }}>
+            Sign in to your clinic account
+          </div>
+
+          <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: T.muted,
+                textTransform: "uppercase", letterSpacing: "0.08em",
+                display: "block", marginBottom: 6 }}>Email</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                required placeholder="doctor@lifedent.com" autoComplete="email"
+                style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 12,
+                  padding: "14px 16px", fontSize: 16, fontFamily: "Sora",
+                  color: T.text, background: T.white, outline: "none" }}
+                onFocus={e => { e.target.style.borderColor = T.gold; e.target.style.boxShadow = `0 0 0 3px ${T.gold}18`; }}
+                onBlur={e =>  { e.target.style.borderColor = T.border; e.target.style.boxShadow = "none"; }}
+              />
+            </div>
+
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: T.muted,
+                textTransform: "uppercase", letterSpacing: "0.08em",
+                display: "block", marginBottom: 6 }}>Password</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                required placeholder="••••••••" autoComplete="current-password"
+                style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 12,
+                  padding: "14px 16px", fontSize: 16, fontFamily: "Sora",
+                  color: T.text, background: T.white, outline: "none" }}
+                onFocus={e => { e.target.style.borderColor = T.gold; e.target.style.boxShadow = `0 0 0 3px ${T.gold}18`; }}
+                onBlur={e =>  { e.target.style.borderColor = T.border; e.target.style.boxShadow = "none"; }}
+              />
+            </div>
+
+            {error && (
+              <div style={{ background: T.redBg, borderLeft: `3px solid ${T.red}`,
+                borderRadius: "0 10px 10px 0", padding: "11px 16px",
+                fontSize: 14, color: T.red }}>
+                {error}
+              </div>
+            )}
+
+            <button type="submit" disabled={loading}
+              style={{ background: `linear-gradient(135deg, ${T.gold}, ${T.goldL})`,
+                color: "#fff", border: "none", borderRadius: 12,
+                padding: "16px 20px", fontSize: 16, fontWeight: 600,
+                fontFamily: "Sora", cursor: loading ? "not-allowed" : "pointer",
+                opacity: loading ? 0.7 : 1, boxShadow: `0 4px 16px ${T.gold}40`,
+                marginTop: 4 }}>
+              {loading ? "Signing in…" : "Sign in →"}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Desktop layout ───────────────────────────────────────────────────────
+  return (
+    <div style={{ display: "flex", height: "100vh", fontFamily: "'Sora', sans-serif" }}>
+
+      {/* Left panel */}
+      <div style={{ width: 420, background: T.sidebar, backgroundImage: TOOTH,
+        backgroundSize: "60px 60px", display: "flex", flexDirection: "column",
+        justifyContent: "center", padding: "60px 52px", flexShrink: 0 }}>
+
+        <div style={{ marginBottom: 48 }}>
+          <img src="/logo.png" alt="Lifedent"
+            style={{ width: "100%", height: "auto", objectFit: "contain",
+              filter: "brightness(0) invert(1)" }} />
+        </div>
+
         <div style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic",
-          fontSize: 36, fontWeight: 500, color: "#F0EDE6", lineHeight: 1.3, marginBottom: 20 }}>
+          fontSize: 34, fontWeight: 500, color: "#F0EDE6", lineHeight: 1.3, marginBottom: 20 }}>
           The clinic experience,<br/>beautifully managed.
         </div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.7 }}>
@@ -61,9 +143,9 @@ export default function Login() {
 
         <div style={{ marginTop: "auto", paddingTop: 48 }}>
           {[
-            { role: "Admin",         desc: "Full clinic access" },
-            { role: "Dentist",       desc: "Patients + clinical notes" },
-            { role: "Receptionist",  desc: "Appointments + scheduling" },
+            { role: "Admin",        desc: "Full clinic access" },
+            { role: "Dentist",      desc: "Patients + clinical notes" },
+            { role: "Receptionist", desc: "Appointments + scheduling" },
           ].map(r => (
             <div key={r.role} style={{ display: "flex", alignItems: "center", gap: 10,
               marginBottom: 12, fontSize: 13, color: "rgba(255,255,255,0.45)" }}>
@@ -76,7 +158,7 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Right panel — login form */}
+      {/* Right panel */}
       <div style={{ flex: 1, background: T.bg, display: "flex",
         alignItems: "center", justifyContent: "center", padding: 40 }}>
         <div style={{ width: "100%", maxWidth: 400 }}>
@@ -94,13 +176,13 @@ export default function Login() {
                 textTransform: "uppercase", letterSpacing: "0.08em",
                 display: "block", marginBottom: 6 }}>Email</label>
               <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                required placeholder="doctor@lifedent.com"
+                required placeholder="doctor@lifedent.com" autoComplete="email"
                 style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 12,
                   padding: "13px 16px", fontSize: 15, fontFamily: "Sora",
                   color: T.text, background: T.white, outline: "none",
                   transition: "border 0.15s, box-shadow 0.15s" }}
                 onFocus={e => { e.target.style.borderColor = T.gold; e.target.style.boxShadow = `0 0 0 3px ${T.gold}18`; }}
-                onBlur={e => { e.target.style.borderColor = T.border; e.target.style.boxShadow = "none"; }}
+                onBlur={e =>  { e.target.style.borderColor = T.border; e.target.style.boxShadow = "none"; }}
               />
             </div>
 
@@ -109,13 +191,13 @@ export default function Login() {
                 textTransform: "uppercase", letterSpacing: "0.08em",
                 display: "block", marginBottom: 6 }}>Password</label>
               <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                required placeholder="••••••••"
+                required placeholder="••••••••" autoComplete="current-password"
                 style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 12,
                   padding: "13px 16px", fontSize: 15, fontFamily: "Sora",
                   color: T.text, background: T.white, outline: "none",
                   transition: "border 0.15s, box-shadow 0.15s" }}
                 onFocus={e => { e.target.style.borderColor = T.gold; e.target.style.boxShadow = `0 0 0 3px ${T.gold}18`; }}
-                onBlur={e => { e.target.style.borderColor = T.border; e.target.style.boxShadow = "none"; }}
+                onBlur={e =>  { e.target.style.borderColor = T.border; e.target.style.boxShadow = "none"; }}
               />
             </div>
 
@@ -132,8 +214,7 @@ export default function Login() {
                 color: "#fff", border: "none", borderRadius: 12,
                 padding: "14px 20px", fontSize: 15, fontWeight: 600,
                 fontFamily: "Sora", cursor: loading ? "not-allowed" : "pointer",
-                opacity: loading ? 0.7 : 1,
-                boxShadow: `0 4px 16px ${T.gold}40`,
+                opacity: loading ? 0.7 : 1, boxShadow: `0 4px 16px ${T.gold}40`,
                 transition: "all 0.18s", marginTop: 4 }}>
               {loading ? "Signing in…" : "Sign in →"}
             </button>
