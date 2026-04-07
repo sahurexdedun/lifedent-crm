@@ -5,9 +5,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const ALLOWED_ORIGIN = "https://lifedent-crm.vercel.app";
+
 const CORS = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 serve(async (req) => {
@@ -38,11 +41,26 @@ serve(async (req) => {
       });
     }
 
-    // ── 2. Parse request body ──
+    // ── 2. Parse and validate request body ──
     const { to, body, patientId, kind, appointmentId } = await req.json();
 
     if (!to || !body) {
       return new Response(JSON.stringify({ error: "Missing 'to' or 'body'" }), {
+        status: 400, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+
+    // Prevent oversized payloads
+    if (body.length > 1024) {
+      return new Response(JSON.stringify({ error: "Message body too long" }), {
+        status: 400, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+
+    // Validate kind
+    const ALLOWED_KINDS = ["CONFIRMATION", "REMINDER", "RECALL"];
+    if (kind && !ALLOWED_KINDS.includes(kind)) {
+      return new Response(JSON.stringify({ error: "Invalid message kind" }), {
         status: 400, headers: { ...CORS, "Content-Type": "application/json" },
       });
     }
