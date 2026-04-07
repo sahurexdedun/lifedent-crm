@@ -6,8 +6,7 @@ import { signOut, findPatientByPhone } from "./lib/db";
 const G = `
   @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600;1,700&family=Sora:wght@300;400;500;600&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; max-width: 100%; }
-  html { overflow-x: hidden; }
-  html, body { height: 100%; font-family: 'Sora', sans-serif; background: #F5F0E6; overflow-x: hidden; max-width: 100vw; }
+  html, body { height: 100%; font-family: 'Sora', sans-serif; background: #F5F0E6; overflow-x: hidden; }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(184,131,46,0.3); border-radius: 4px; }
@@ -144,9 +143,9 @@ function Card({children,style={},cls=""}){ return <div className={cls} style={{b
 function H({children,size=28,italic=false,style={}}){ return <div style={{fontFamily:"'Cormorant Garamond',serif",fontStyle:italic?"italic":"normal",fontSize:size,fontWeight:600,color:T.text,lineHeight:1.15,...style}}>{children}</div>; }
 function Lbl({children}){ return <div style={{fontSize:10.5,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>{children}</div>; }
 
-function Inp({label,...p}){ return <div style={{display:"flex",flexDirection:"column",gap:0}}>{label&&<Lbl>{label}</Lbl>}<input {...p} style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 14px",fontSize:14,fontFamily:"Sora",color:T.text,background:"#FDFCFA",outline:"none",transition:"border 0.15s,box-shadow 0.15s",...p.style}}/></div>; }
-function Sel({label,children,...p}){ return <div style={{display:"flex",flexDirection:"column",gap:0}}>{label&&<Lbl>{label}</Lbl>}<select {...p} style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 14px",fontSize:14,fontFamily:"Sora",color:T.text,background:"#FDFCFA",outline:"none",cursor:"pointer",...p.style}}>{children}</select></div>; }
-function Txta({label,...p}){ return <div style={{display:"flex",flexDirection:"column",gap:0}}>{label&&<Lbl>{label}</Lbl>}<textarea {...p} style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 14px",fontSize:14,fontFamily:"Sora",color:T.text,background:"#FDFCFA",outline:"none",resize:"vertical",...p.style}}/></div>; }
+function Inp({label,...p}){ return <div style={{display:"flex",flexDirection:"column",gap:0,width:"100%"}}>{label&&<Lbl>{label}</Lbl>}<input {...p} style={{width:"100%",border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 14px",fontSize:14,fontFamily:"Sora",color:T.text,background:"#FDFCFA",outline:"none",transition:"border 0.15s,box-shadow 0.15s",...p.style}}/></div>; }
+function Sel({label,children,...p}){ return <div style={{display:"flex",flexDirection:"column",gap:0,width:"100%"}}>{label&&<Lbl>{label}</Lbl>}<select {...p} style={{width:"100%",border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 14px",fontSize:14,fontFamily:"Sora",color:T.text,background:"#FDFCFA",outline:"none",cursor:"pointer",...p.style}}>{children}</select></div>; }
+function Txta({label,...p}){ return <div style={{display:"flex",flexDirection:"column",gap:0,width:"100%"}}>{label&&<Lbl>{label}</Lbl>}<textarea {...p} style={{width:"100%",border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 14px",fontSize:14,fontFamily:"Sora",color:T.text,background:"#FDFCFA",outline:"none",resize:"vertical",...p.style}}/></div>; }
 
 function Btn({children,v="gold",sm,onClick,disabled,style={}}){
   const VS={
@@ -511,7 +510,7 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
     <div className="fade-up">
       <H size={30} style={{marginBottom:24}}>New Appointment</H>
       <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:18,marginBottom:16}}>
-        <Card style={{padding:"24px 26px"}}>
+        <Card style={{padding:isMobile?"16px 14px":"24px 26px"}}>
           <H size={18} style={{marginBottom:16}}>Patient</H>
           <div style={{display:"flex",gap:8,marginBottom:18}}>
             {["Existing","New"].map(m=><Btn key={m} v={mode===m?"dark":"ghost"} sm onClick={()=>{setMode(m);setErrors({});}}>{m} Patient</Btn>)}
@@ -522,7 +521,7 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
             :<div style={{display:"flex",flexDirection:"column",gap:14}}>
               <div><Inp label="Full Name *" value={name} onChange={e=>{setName(e.target.value);setErrors(v=>({...v,name:null}));}} placeholder="e.g. Sara Mohamed"/>{errors.name&&<div style={{color:T.red,fontSize:12,marginTop:4}}>{errors.name}</div>}</div>
               <div><Inp label="Phone *" value={phone} onChange={e=>{setPhone(e.target.value);setErrors(v=>({...v,phone:null}));}} placeholder="01012345678"/>{errors.phone&&<div style={{color:T.red,fontSize:12,marginTop:4}}>{errors.phone}</div>}{phone&&<div style={{fontSize:11,color:T.muted,marginTop:4}}>WhatsApp → {toWA(phone)}</div>}</div>
-              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 <Inp label="Age (optional)" type="number" value={age} onChange={e=>setAge(e.target.value)} placeholder="35"/>
                 <Sel label="Gender (optional)" value={gender} onChange={e=>setGender(e.target.value)}>
                   <option value="">—</option>
@@ -533,10 +532,10 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
             </div>
           }
         </Card>
-        <Card style={{padding:"24px 26px"}}>
+        <Card style={{padding:isMobile?"16px 14px":"24px 26px"}}>
           <H size={18} style={{marginBottom:16}}>Appointment Details</H>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <Inp label="Date" type="date" value={apDate} onChange={e=>setApDate(e.target.value)}/>
               <Inp label="Time" type="time" value={apTime} onChange={e=>setApTime(e.target.value)}/>
             </div>
@@ -1025,7 +1024,7 @@ export default function CRM({ role="admin", canSeeClinical=true, userFullName=""
   return(
     <>
       <style>{G}</style>
-      <div style={{display:"flex",height:"100vh",width:"100%",maxWidth:"100vw",fontFamily:"'Sora',sans-serif",overflow:"hidden"}}>
+      <div style={{display:"flex",height:"100vh",fontFamily:"'Sora',sans-serif",overflow:"hidden"}}>
         {!isMobile&&<Sidebar page={page} setPage={setPage} patients={patients} appointments={appointments} recalls={recalls} messages={messages} onSignOut={handleSignOut}/>}
         <main style={{flex:"1 1 0",minWidth:0,width:0,overflowY:"auto",overflowX:"hidden",padding:isMobile?"20px 16px 100px":"34px 38px",background:T.bg}}>
           {page==="Dashboard"    && <Dashboard    {...sharedProps} userFullName={userFullName}/>}
