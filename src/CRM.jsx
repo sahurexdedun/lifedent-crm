@@ -944,12 +944,13 @@ function Sidebar({page,setPage,patients,appointments,recalls,messages,onSignOut}
   return(
     <aside style={{width:224,background:T.sidebar,display:"flex",flexDirection:"column",flexShrink:0,height:"100vh",position:"sticky",top:0,overflowY:"auto",backgroundImage:TOOTH,backgroundSize:"60px 60px"}}>
       <div style={{padding:"24px 20px 18px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:11}}>
-          <div style={{width:40,height:40,borderRadius:12,background:`linear-gradient(135deg,${T.gold},${T.goldL})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:21,boxShadow:`0 4px 16px ${T.gold}50`}}>🦷</div>
-          <div>
-            <div style={{fontFamily:"'Cormorant Garamond',serif",color:"#F0EDE6",fontSize:18,fontWeight:600,lineHeight:1}}>Lifedent</div>
-            <div style={{color:T.gold+"99",fontSize:10,marginTop:3,fontFamily:"Sora",letterSpacing:"0.05em"}}>Clinic CRM</div>
-          </div>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <img
+            src="/logo.png"
+            alt="Lifedent Dental Clinic"
+            style={{height:48,width:"auto",objectFit:"contain",filter:"brightness(0) invert(1)"}}
+          />
+          <div style={{color:T.gold+"99",fontSize:10,fontFamily:"Sora",letterSpacing:"0.06em",paddingLeft:2}}>Clinic CRM</div>
         </div>
       </div>
       <nav style={{padding:"13px 10px",flex:1}}>
