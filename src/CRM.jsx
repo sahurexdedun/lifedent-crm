@@ -5,8 +5,9 @@ import { signOut, findPatientByPhone } from "./lib/db";
 /* ════════════════════════════════════════════════ STYLES */
 const G = `
   @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600;1,700&family=Sora:wght@300;400;500;600&display=swap');
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; font-family: 'Sora', sans-serif; background: #F5F0E6; }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; max-width: 100%; }
+  html { overflow-x: hidden; }
+  html, body { height: 100%; font-family: 'Sora', sans-serif; background: #F5F0E6; overflow-x: hidden; max-width: 100vw; }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(184,131,46,0.3); border-radius: 4px; }
@@ -509,8 +510,8 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
   return(
     <div className="fade-up">
       <H size={30} style={{marginBottom:24}}>New Appointment</H>
-      <div style={{width:"100%",maxWidth:"100%",overflowX:"hidden"}}>
-      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:18,marginBottom:16}}>        <Card style={{padding:"24px 26px"}}>
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:18,marginBottom:16}}>
+        <Card style={{padding:"24px 26px"}}>
           <H size={18} style={{marginBottom:16}}>Patient</H>
           <div style={{display:"flex",gap:8,marginBottom:18}}>
             {["Existing","New"].map(m=><Btn key={m} v={mode===m?"dark":"ghost"} sm onClick={()=>{setMode(m);setErrors({});}}>{m} Patient</Btn>)}
@@ -551,12 +552,11 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
           </div>
         </Card>
       </div>
-      </div>
       {sendMsg&&(
         <Card style={{padding:"14px 20px",marginBottom:16,display:"flex",alignItems:"center",gap:14,borderLeft:`3px solid ${T.wa}`,background:"#F0FAF4"}}>
           <span style={{fontSize:22}}>💬</span>
-          <div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:14}}>WhatsApp confirmation will be sent</div><div style={{fontSize:12,color:T.muted,marginTop:2,wordBreak:"break-all"}}>To: {mode==="Existing"?(patients[pid]?.phone?toWA(patients[pid].phone):"—"):(phone?toWA(phone):"—")}</div></div>
-          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,color:T.muted,flexShrink:0}}><input type="checkbox" checked={sendMsg} onChange={e=>setSendMsg(e.target.checked)}/> Send</label>
+          <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14}}>WhatsApp confirmation will be sent</div><div style={{fontSize:12,color:T.muted,marginTop:2}}>To: {mode==="Existing"?(patients[pid]?.phone?toWA(patients[pid].phone):"—"):(phone?toWA(phone):"—")}</div></div>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,color:T.muted}}><input type="checkbox" checked={sendMsg} onChange={e=>setSendMsg(e.target.checked)}/> Send</label>
         </Card>
       )}
       {!sendMsg&&<div style={{marginBottom:16}}><label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:14,color:T.muted}}><input type="checkbox" checked={sendMsg} onChange={e=>setSendMsg(e.target.checked)}/> Also send WhatsApp confirmation</label></div>}
@@ -1025,9 +1025,9 @@ export default function CRM({ role="admin", canSeeClinical=true, userFullName=""
   return(
     <>
       <style>{G}</style>
-      <div style={{display:"flex",height:"100vh",fontFamily:"'Sora',sans-serif",overflow:"hidden"}}>
+      <div style={{display:"flex",height:"100vh",width:"100%",maxWidth:"100vw",fontFamily:"'Sora',sans-serif",overflow:"hidden"}}>
         {!isMobile&&<Sidebar page={page} setPage={setPage} patients={patients} appointments={appointments} recalls={recalls} messages={messages} onSignOut={handleSignOut}/>}
-        <main style={{flex:1,overflowY:"auto",overflowX:"hidden",padding:isMobile?"20px 16px 100px":"34px 38px",background:T.bg,minWidth:0,maxWidth:"100%"}}>
+        <main style={{flex:"1 1 0",minWidth:0,width:0,overflowY:"auto",overflowX:"hidden",padding:isMobile?"20px 16px 100px":"34px 38px",background:T.bg}}>
           {page==="Dashboard"    && <Dashboard    {...sharedProps} userFullName={userFullName}/>}
           {page==="Appointments" && <Appointments {...sharedProps}/>}
           {page==="NewAppt"      && <NewAppt      {...sharedProps} setPage={setPage}/>}
