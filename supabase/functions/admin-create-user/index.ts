@@ -5,7 +5,7 @@
 //
 // Deploy:
 //   supabase functions deploy admin-create-user
-//   supabase secrets set SUPABASE_SERVICE_ROLE_KEY=eyJ...
+//   supabase secrets set SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2aWNoZmF4dW5na3NzeGFreGJzIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU2MDUxNiwiZXhwIjoyMDkxMTM2NTE2fQ.V6BBppsk80t_nEVGhYMzEaAHRP2NBN5qdnzyr9LkKMo
 //
 // (SUPABASE_URL is auto-provided by the Supabase Edge runtime.)
 
@@ -23,7 +23,7 @@ serve(async (req) => {
 
   try {
     const SUPABASE_URL          = Deno.env.get("SUPABASE_URL")!;
-    const SERVICE_ROLE_KEY      = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const SERVICE_ROLE_KEY      = Deno.env.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2aWNoZmF4dW5na3NzeGFreGJzIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU2MDUxNiwiZXhwIjoyMDkxMTM2NTE2fQ.V6BBppsk80t_nEVGhYMzEaAHRP2NBN5qdnzyr9LkKMo")!;
     const ANON_KEY              = Deno.env.get("SUPABASE_ANON_KEY")!;
 
     if (!SERVICE_ROLE_KEY) {
