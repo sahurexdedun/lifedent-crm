@@ -8,6 +8,10 @@ export function normalizePatient(p) {
     id: p.id, name: p.name, phone: p.phone, email: p.email || "",
     age: p.age || null, gender: p.gender || null,
     legacyId: p.legacy_id || "",
+    notes: p.notes || "",
+    intakeForm: p.intake_form || null,
+    intakeCompletedAt: p.intake_completed_at ? new Date(p.intake_completed_at) : null,
+    intakeUpdatedAt:   p.intake_updated_at   ? new Date(p.intake_updated_at)   : null,
   };
 }
 export function normalizeAppt(ap) {
@@ -121,8 +125,25 @@ export async function createPatient({ name, phone, email = "", age = null, gende
   return normalizePatient(data);
 }
 export async function updatePatient(id, patch) {
-  const map = { name: "name", phone: "phone", email: "email", age: "age", gender: "gender", legacyId: "legacy_id" };
-  const dbPatch = Object.fromEntries(Object.entries(patch).filter(([k]) => map[k]).map(([k, v]) => [map[k], v]));
+  const map = {
+    name: "name", phone: "phone", email: "email", age: "age",
+    gender: "gender", legacyId: "legacy_id", notes: "notes",
+  };
+  const dbPatch = Object.fromEntries(
+    Object.entries(patch).filter(([k]) => map[k]).map(([k, v]) => [map[k], v])
+  );
+  // intakeForm is a JSONB — also bump intake_updated_at, and set
+  // intake_completed_at the first time the form is saved.
+  if (patch.intakeForm !== undefined) {
+    dbPatch.intake_form       = patch.intakeForm;
+    dbPatch.intake_updated_at = new Date().toISOString();
+    // only set completed_at if this is the first save
+    const { data: existing } = await supabase.from("patients")
+      .select("intake_completed_at").eq("id", id).maybeSingle();
+    if (existing && !existing.intake_completed_at) {
+      dbPatch.intake_completed_at = dbPatch.intake_updated_at;
+    }
+  }
   const { data, error } = await supabase.from("patients").update(dbPatch).eq("id", id).select().single();
   if (error) throw error;
   return normalizePatient(data);

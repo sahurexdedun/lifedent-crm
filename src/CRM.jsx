@@ -6,6 +6,7 @@ import {
   getProfiles, adminCreateUser, adminUpdateUserRole,
   adminSetUserActive, adminResetPassword,
 } from "./lib/db";
+import { L as IL, defaultIntake, mergeIntake, computePatientFlags, intakeIsStarted } from "./lib/intake";
 
 /* ════════════════════════════════════════════════ STYLES */
 const G = `
@@ -522,7 +523,7 @@ function Appointments({patients,appointments,patchAppt,sendWAMessage,toast,canSe
 }
 
 /* ════════════════════════════════════════════════ NEW APPOINTMENT */
-function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobile,dentists=[],services=[],categories=[]}){
+function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobile,dentists=[],services=[],categories=[],patchPatient}){
   // Build active lists (fall back to hardcoded constants if DB empty — first-run safety)
   const dentistList = (dentists||[]).filter(d=>d.isActive).map(d=>d.name);
   const dentistOptions = dentistList.length ? dentistList : DENTISTS;
@@ -541,9 +542,11 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
   const[recNote,setRecNote]=useState("");
   const[errors,setErrors]=useState({});
   const[saving,setSaving]=useState(false);
+  const[intakePromptFor,setIntakePromptFor]=useState(null);
+  const[intakeOpen,setIntakeOpen]=useState(false);
 
   const submit=async()=>{
-    const errs={};let finalPid=pid;
+    const errs={};let finalPid=pid; let newlyCreatedPatient=null;
     if(mode==="New"){
       if(!name.trim())errs.name="Required";
       if(phone.replace(/\D/g,"").length<10)errs.phone="Enter a valid Egyptian number";
@@ -555,7 +558,7 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
         if(ex){finalPid=ex.id;toast("Phone exists — linked to existing patient.");}
         else{
           const p=await addPatient({name:name.trim(),phone:dig,email:"",age:age?parseInt(age):null,gender:gender||null});
-          finalPid=p.id;
+          finalPid=p.id; newlyCreatedPatient=p;
         }
       }catch(e){toast(`Error: ${e.message}`);setSaving(false);return;}
     }
@@ -568,6 +571,12 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
         await sendWAMessage({to:p.phone||phone,body,kind:"CONFIRMATION"});
       }
       toast("Appointment created!");
+      // If we just created a brand-new patient, offer to fill the intake form
+      if (newlyCreatedPatient) {
+        setIntakePromptFor(newlyCreatedPatient);
+        setSaving(false);
+        return;
+      }
       setPage("Appointments");
     }catch(e){toast(`Error: ${e.message}`);}
     finally{setSaving(false);}
@@ -637,12 +646,436 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
         <Btn v="gold" onClick={submit} disabled={saving}>{saving?<><Spinner/> Saving…</>:"Save Appointment"}</Btn>
         <Btn v="ghost" onClick={()=>setPage("Appointments")}>Cancel</Btn>
       </div>
+      {/* Intake prompt after creating a brand-new patient inline */}
+      {intakePromptFor && !intakeOpen && (
+        <IntakePromptModal
+          patientName={intakePromptFor.name}
+          onYes={()=>setIntakeOpen(true)}
+          onSkip={()=>{ setIntakePromptFor(null); setPage("Appointments"); }}
+        />
+      )}
+      {intakePromptFor && intakeOpen && (
+        <IntakeFormModal
+          patient={intakePromptFor}
+          initialIntake={null}
+          canEdit={true}
+          locked={false}
+          onClose={()=>{ setIntakeOpen(false); setIntakePromptFor(null); setPage("Appointments"); }}
+          onSave={async(form)=>{
+            try{ await patchPatient(intakePromptFor.id,{intakeForm:form}); toast("Intake form saved"); }
+            catch(e){ toast(`Error: ${e.message}`); throw e; }
+          }}
+        />
+      )}
     </div>
   );
 }
 
 /* ════════════════════════════════════════════════ PATIENTS */
-function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatient,importPatients,toast,canSeeClinical,isMobile,role}){
+/* ════════════════════════════════════════════════ INTAKE — bilingual helpers + form */
+
+// Bilingual label: English on top, Arabic on a lighter second line.
+function Bi({k, style}) {
+  const x = IL[k] || {en:k, ar:""};
+  return (
+    <span style={style}>
+      {x.en}
+      {x.ar && <span style={{display:"block",fontSize:10.5,color:T.muted,marginTop:1,direction:"rtl",textAlign:"left",fontWeight:400}}>{x.ar}</span>}
+    </span>
+  );
+}
+
+// Flag chips — red and amber clinical warnings, shown on patient card + appointments
+function PatientFlags({intake, compact=false}) {
+  const flags = useMemo(()=>computePatientFlags(intake),[intake]);
+  if (!flags.length) return null;
+  return (
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:compact?6:10}}>
+      {flags.map(f=>(
+        <span key={f.key} title={f.detail||f.ar}
+          style={{
+            display:"inline-flex",alignItems:"center",gap:4,
+            fontSize:compact?10:11, fontWeight:600,
+            padding:compact?"2px 7px":"3px 9px",
+            borderRadius:99,
+            background: f.level==="red" ? T.redBg : T.amberBg,
+            color:      f.level==="red" ? T.red   : T.amber,
+            border:`1px solid ${f.level==="red"?T.red+"55":T.amber+"55"}`,
+          }}>
+          <span style={{fontSize:compact?9:10}}>{f.level==="red"?"⚠":"!"}</span>
+          {f.en}{f.detail?` · ${f.detail}`:""}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// Compact read-only display of a saved intake form
+function IntakeFormView({intake}) {
+  if (!intake) return null;
+  const fm = mergeIntake(intake);
+  const row = (label, value, hi=false) => {
+    if (value === null || value === undefined || value === "" || value === false) value = IL.notFilled.en;
+    return (
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"6px 0",borderBottom:`1px solid ${T.border}`,gap:14}}>
+        <span style={{fontSize:11.5,color:T.muted,flex:"0 0 45%"}}>{label}</span>
+        <span style={{fontSize:12.5,color:hi?T.red:T.text,fontWeight:hi?600:400,textAlign:"right"}}>{value===true?IL.yes.en:value}</span>
+      </div>
+    );
+  };
+  const Section = ({title, ar, children})=>(
+    <details open style={{marginBottom:10,background:T.bg,borderRadius:10,padding:"10px 14px"}}>
+      <summary style={{cursor:"pointer",fontSize:13,fontWeight:600,color:T.text,outline:"none"}}>
+        {title}<span style={{marginLeft:8,fontSize:11,color:T.muted,direction:"rtl",fontWeight:400}}>{ar}</span>
+      </summary>
+      <div style={{marginTop:8}}>{children}</div>
+    </details>
+  );
+  const p  = fm.personal, m = fm.medical, s = fm.surgical, w = fm.womens, ls = fm.lifestyle, d = fm.dental, c = fm.complaint;
+  const cs = m.conditions, al = m.allergies;
+  return (
+    <div>
+      <Section title={IL.s_personal.en} ar={IL.s_personal.ar}>
+        {row(IL.dob.en, p.dob)}
+        {row(IL.gender.en, p.gender)}
+        {row(IL.nationalId.en, p.nationalId)}
+        {row(IL.occupation.en, p.occupation)}
+        {row(IL.marital.en, p.maritalStatus)}
+        {row(IL.address.en, p.address)}
+        {row(IL.bloodType.en, p.bloodType)}
+        {row(`${IL.emName.en}`, [p.emergencyContact?.name, p.emergencyContact?.relation, p.emergencyContact?.phone].filter(Boolean).join(" · "))}
+      </Section>
+
+      <Section title={IL.s_medical.en} ar={IL.s_medical.ar}>
+        {row(IL.al_pen.en,     al.penicillin,       al.penicillin)}
+        {row(IL.al_otherAb.en, al.otherAntibiotics)}
+        {row(IL.al_latex.en,   al.latex,            al.latex)}
+        {row(IL.al_la.en,      al.localAnesthesia,  al.localAnesthesia)}
+        {al.other && row(IL.al_other.en, al.other)}
+        {row(IL.medications.en, m.medications)}
+        {row(IL.c_diabetes.en,    cs.diabetes?.has    ? `${IL.yes.en}${cs.diabetes.type?` · T${cs.diabetes.type}`:""}` : IL.no.en, cs.diabetes?.has)}
+        {row(IL.c_htn.en,         cs.hypertension,    cs.hypertension)}
+        {row(IL.c_heart.en,       cs.heartDisease?.has? `${IL.yes.en}${cs.heartDisease.detail?` · ${cs.heartDisease.detail}`:""}` : IL.no.en, cs.heartDisease?.has)}
+        {row(IL.c_stroke.en,      cs.stroke)}
+        {row(IL.c_asthma.en,      cs.asthma)}
+        {row(IL.c_epilepsy.en,    cs.epilepsy)}
+        {row(IL.c_thyroid.en,     cs.thyroid)}
+        {row(IL.c_kidney.en,      cs.kidney)}
+        {row(IL.c_liver.en,       cs.liver)}
+        {row(IL.c_hep.en,         cs.hepatitis?.has ? `${IL.yes.en}${cs.hepatitis.type?` · ${cs.hepatitis.type}`:""}` : IL.no.en, cs.hepatitis?.has)}
+        {row(IL.c_hiv.en,         cs.hiv, cs.hiv)}
+        {row(IL.c_cancer.en,      cs.cancer?.has ? `${cs.cancer.active?"Active":"History"}${cs.cancer.detail?` · ${cs.cancer.detail}`:""}` : IL.no.en, cs.cancer?.active)}
+        {row(IL.c_osteo.en,       cs.osteoporosis?.has ? `${IL.yes.en}${cs.osteoporosis.bisphosphonates?` · ${IL.c_bisphos.en}`:""}` : IL.no.en, cs.osteoporosis?.bisphosphonates)}
+        {row(IL.c_bleed.en,       cs.bleedingDisorder, cs.bleedingDisorder)}
+        {row(IL.c_anticoag.en,    cs.anticoagulants?.has ? `${IL.yes.en}${cs.anticoagulants.drug?` · ${cs.anticoagulants.drug}`:""}` : IL.no.en, cs.anticoagulants?.has)}
+      </Section>
+
+      <Section title={IL.s_surgical.en} ar={IL.s_surgical.ar}>
+        {row(IL.recentSurgery.en, s.recentSurgery?.has ? `${IL.yes.en}${s.recentSurgery.detail?` · ${s.recentSurgery.detail}`:""}` : IL.no.en, s.recentSurgery?.has)}
+        {row(IL.hospital.en,      s.hospitalizations)}
+      </Section>
+
+      {p.gender === "Female" && (
+        <Section title={IL.s_womens.en} ar={IL.s_womens.ar}>
+          {row(IL.pregnant.en,      w.pregnant?.has ? `${IL.yes.en}${w.pregnant.trimester?` · T${w.pregnant.trimester}`:""}` : IL.no.en, w.pregnant?.has)}
+          {row(IL.breastfeeding.en, w.breastfeeding, w.breastfeeding)}
+          {row(IL.hormonal.en,      w.hormonalContraception)}
+        </Section>
+      )}
+
+      <Section title={IL.s_lifestyle.en} ar={IL.s_lifestyle.ar}>
+        {row(IL.smoking.en, ls.smoking?.has ? `${IL.yes.en} · ${ls.smoking.cigsPerDay||0}/d` : IL.no.en, (ls.smoking?.cigsPerDay||0)>10)}
+        {row(IL.alcohol.en, ls.alcohol)}
+      </Section>
+
+      <Section title={IL.s_dental.en} ar={IL.s_dental.ar}>
+        {row(IL.lastVisit.en,    d.lastVisit)}
+        {row(IL.lastXray.en,     d.lastXray)}
+        {row(IL.brushing.en,     d.brushing)}
+        {row(IL.flossing.en,     d.flossing)}
+        {row(IL.bleedingGums.en, d.bleedingGums)}
+        {row(IL.sensitivity.en,  [d.sensitivity?.hot && IL.sens_hot.en, d.sensitivity?.cold && IL.sens_cold.en, d.sensitivity?.sweet && IL.sens_sweet.en].filter(Boolean).join(", ") || IL.no.en)}
+        {row(IL.tmj.en,          d.tmjPain)}
+        {row(IL.bruxism.en,      d.bruxism)}
+        {row(IL.prior.en,        [d.prior?.orthodontics && IL.pr_ortho.en, d.prior?.extractions && IL.pr_extract.en, d.prior?.rootCanals && IL.pr_rct.en, d.prior?.implants && IL.pr_implants.en, d.prior?.gumSurgery && IL.pr_gum.en].filter(Boolean).join(", ") || IL.no.en)}
+      </Section>
+
+      <Section title={IL.s_complaint.en} ar={IL.s_complaint.ar}>
+        {row(IL.complaint.en, c.text)}
+        {row(IL.painScore.en, `${c.painScore||0}/10`, (c.painScore||0)>=7)}
+        {row(IL.duration.en,  c.duration)}
+      </Section>
+    </div>
+  );
+}
+
+// Bilingual yes/no toggle with optional detail field
+function YN({lblKey, value, onChange, detailKey, detailValue, onDetailChange, detailType="text"}) {
+  const has = !!(typeof value === "object" ? value?.has : value);
+  return (
+    <div style={{marginBottom:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+        <Bi k={lblKey} style={{fontSize:12.5,fontWeight:500,flex:1}}/>
+        <div style={{display:"flex",gap:6}}>
+          <button onClick={()=>onChange(typeof value==="object"?{...value,has:false}:false)}
+            style={{padding:"5px 12px",fontSize:11,fontWeight:600,fontFamily:"Sora",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:!has?T.text:T.white,color:!has?T.white:T.muted}}>
+            {IL.no.en} / {IL.no.ar}
+          </button>
+          <button onClick={()=>onChange(typeof value==="object"?{...value,has:true}:true)}
+            style={{padding:"5px 12px",fontSize:11,fontWeight:600,fontFamily:"Sora",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:has?T.red:T.white,color:has?T.white:T.muted}}>
+            {IL.yes.en} / {IL.yes.ar}
+          </button>
+        </div>
+      </div>
+      {has && detailKey && (
+        <input value={detailValue||""} type={detailType} onChange={e=>onDetailChange(e.target.value)} placeholder={IL[detailKey]?.en||""}
+          style={{marginTop:6,width:"100%",border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",fontSize:12,fontFamily:"Sora"}}/>
+      )}
+    </div>
+  );
+}
+
+// Bilingual labeled text input
+function BiInp({lblKey, value, onChange, type="text", placeholder=""}) {
+  return (
+    <div style={{marginBottom:10}}>
+      <Bi k={lblKey} style={{fontSize:11.5,fontWeight:600,color:T.muted,marginBottom:5,display:"block"}}/>
+      <input type={type} value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+        style={{width:"100%",border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 11px",fontSize:13,fontFamily:"Sora"}}/>
+    </div>
+  );
+}
+
+// Bilingual labeled <select>
+function BiSel({lblKey, value, onChange, options}) {
+  return (
+    <div style={{marginBottom:10}}>
+      <Bi k={lblKey} style={{fontSize:11.5,fontWeight:600,color:T.muted,marginBottom:5,display:"block"}}/>
+      <select value={value||""} onChange={e=>onChange(e.target.value)}
+        style={{width:"100%",border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 11px",fontSize:13,fontFamily:"Sora",background:T.white}}>
+        <option value="">— —</option>
+        {options.map(o=>(
+          <option key={o.value} value={o.value}>{(IL[o.lblKey]?.en)||o.value} / {(IL[o.lblKey]?.ar)||""}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// The editable bilingual intake form. Renders as a full-screen modal.
+function IntakeFormModal({patient, initialIntake, onClose, onSave, canEdit, locked}) {
+  const [fm, setFm] = useState(()=>mergeIntake(initialIntake));
+  const [saving, setSaving] = useState(false);
+  const set = (path, value) => {
+    setFm(prev=>{
+      const next = JSON.parse(JSON.stringify(prev));
+      const parts = path.split(".");
+      let o = next;
+      for (let i=0; i<parts.length-1; i++) o = o[parts[i]] = o[parts[i]] ?? {};
+      o[parts[parts.length-1]] = value;
+      return next;
+    });
+  };
+  const handleSave = async () => {
+    setSaving(true);
+    try { await onSave(fm); onClose(); }
+    catch (e) { /* parent toasts */ }
+    finally { setSaving(false); }
+  };
+  const flags = computePatientFlags(fm);
+  const isFemale = fm.personal.gender === "Female";
+
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"flex-start",justifyContent:"center",padding:20,overflowY:"auto"}}>
+      <Card style={{maxWidth:780,width:"100%",padding:0,marginTop:20,marginBottom:60}} cls="fade-up">
+        <div style={{padding:"20px 24px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,background:T.white,zIndex:10}}>
+          <div>
+            <H size={20}>Medical Intake · {patient?.name||""}</H>
+            <div style={{fontSize:11,color:T.muted,marginTop:2,direction:"rtl",textAlign:"left"}}>النموذج الطبي للمريض</div>
+          </div>
+          <button onClick={onClose} style={{border:"none",background:"transparent",fontSize:26,color:T.muted,cursor:"pointer"}}>×</button>
+        </div>
+
+        {locked && (
+          <div style={{padding:"10px 24px",background:T.amberBg,borderBottom:`1px solid ${T.border}`,fontSize:12,color:T.text2}}>
+            🔒 <Bi k="receptionistLocked"/>
+          </div>
+        )}
+
+        {flags.length>0 && (
+          <div style={{padding:"10px 24px",background:T.bg,borderBottom:`1px solid ${T.border}`}}>
+            <PatientFlags intake={fm} compact/>
+          </div>
+        )}
+
+        <div style={{padding:"18px 24px"}}>
+          {/* PERSONAL */}
+          <H size={16} style={{marginBottom:10}}>{IL.s_personal.en} <span style={{fontSize:12,color:T.muted,marginLeft:6,direction:"rtl"}}>{IL.s_personal.ar}</span></H>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:18}}>
+            <BiInp lblKey="dob"          value={fm.personal.dob}          onChange={v=>set("personal.dob",v)} type="date"/>
+            <BiSel lblKey="gender"       value={fm.personal.gender}       onChange={v=>set("personal.gender",v)}
+              options={[{value:"Male",lblKey:"gender_male"},{value:"Female",lblKey:"gender_female"},{value:"Other",lblKey:"gender_other"}]}/>
+            <BiInp lblKey="nationalId"   value={fm.personal.nationalId}   onChange={v=>set("personal.nationalId",v)}/>
+            <BiInp lblKey="occupation"   value={fm.personal.occupation}   onChange={v=>set("personal.occupation",v)}/>
+            <BiSel lblKey="marital"      value={fm.personal.maritalStatus} onChange={v=>set("personal.maritalStatus",v)}
+              options={[{value:"Single",lblKey:"mar_single"},{value:"Married",lblKey:"mar_married"},{value:"Divorced",lblKey:"mar_divorced"},{value:"Widowed",lblKey:"mar_widowed"}]}/>
+            <BiInp lblKey="bloodType"    value={fm.personal.bloodType}    onChange={v=>set("personal.bloodType",v)} placeholder="A+ / B- / O+ ..."/>
+            <div style={{gridColumn:"1 / -1"}}>
+              <BiInp lblKey="address"    value={fm.personal.address}      onChange={v=>set("personal.address",v)}/>
+            </div>
+            <BiInp lblKey="emName"  value={fm.personal.emergencyContact?.name||""}     onChange={v=>set("personal.emergencyContact.name",v)}/>
+            <BiInp lblKey="emRel"   value={fm.personal.emergencyContact?.relation||""} onChange={v=>set("personal.emergencyContact.relation",v)}/>
+            <BiInp lblKey="emPhone" value={fm.personal.emergencyContact?.phone||""}    onChange={v=>set("personal.emergencyContact.phone",v)} type="tel"/>
+          </div>
+
+          {/* MEDICAL */}
+          <H size={16} style={{marginBottom:10}}>{IL.s_medical.en} <span style={{fontSize:12,color:T.muted,marginLeft:6,direction:"rtl"}}>{IL.s_medical.ar}</span></H>
+          <div style={{background:T.bg,borderRadius:10,padding:"14px 16px",marginBottom:18}}>
+            <div style={{fontSize:12,fontWeight:600,color:T.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>{IL.allergies.en} / {IL.allergies.ar}</div>
+            <YN lblKey="al_pen"     value={fm.medical.allergies.penicillin}        onChange={v=>set("medical.allergies.penicillin",v)}/>
+            <YN lblKey="al_otherAb" value={fm.medical.allergies.otherAntibiotics}  onChange={v=>set("medical.allergies.otherAntibiotics",v)}/>
+            <YN lblKey="al_latex"   value={fm.medical.allergies.latex}             onChange={v=>set("medical.allergies.latex",v)}/>
+            <YN lblKey="al_la"      value={fm.medical.allergies.localAnesthesia}   onChange={v=>set("medical.allergies.localAnesthesia",v)}/>
+            <BiInp lblKey="al_other" value={fm.medical.allergies.other||""}        onChange={v=>set("medical.allergies.other",v)}/>
+          </div>
+          <BiInp lblKey="medications" value={fm.medical.medications} onChange={v=>set("medical.medications",v)} placeholder="Drug name, dose, frequency..."/>
+          <div style={{background:T.bg,borderRadius:10,padding:"14px 16px",marginTop:8,marginBottom:18}}>
+            <div style={{fontSize:12,fontWeight:600,color:T.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>{IL.conditions.en} / {IL.conditions.ar}</div>
+            <YN lblKey="c_diabetes"  value={fm.medical.conditions.diabetes}     onChange={v=>set("medical.conditions.diabetes",v)}
+                detailKey="c_diabetes_type" detailValue={fm.medical.conditions.diabetes.type} onDetailChange={v=>set("medical.conditions.diabetes.type",v)}/>
+            <YN lblKey="c_htn"       value={fm.medical.conditions.hypertension} onChange={v=>set("medical.conditions.hypertension",v)}/>
+            <YN lblKey="c_heart"     value={fm.medical.conditions.heartDisease} onChange={v=>set("medical.conditions.heartDisease",v)}
+                detailKey="c_heart_d" detailValue={fm.medical.conditions.heartDisease.detail} onDetailChange={v=>set("medical.conditions.heartDisease.detail",v)}/>
+            <YN lblKey="c_stroke"    value={fm.medical.conditions.stroke}       onChange={v=>set("medical.conditions.stroke",v)}/>
+            <YN lblKey="c_asthma"    value={fm.medical.conditions.asthma}       onChange={v=>set("medical.conditions.asthma",v)}/>
+            <YN lblKey="c_epilepsy"  value={fm.medical.conditions.epilepsy}     onChange={v=>set("medical.conditions.epilepsy",v)}/>
+            <YN lblKey="c_thyroid"   value={fm.medical.conditions.thyroid}      onChange={v=>set("medical.conditions.thyroid",v)}/>
+            <YN lblKey="c_kidney"    value={fm.medical.conditions.kidney}       onChange={v=>set("medical.conditions.kidney",v)}/>
+            <YN lblKey="c_liver"     value={fm.medical.conditions.liver}        onChange={v=>set("medical.conditions.liver",v)}/>
+            <YN lblKey="c_hep"       value={fm.medical.conditions.hepatitis}    onChange={v=>set("medical.conditions.hepatitis",v)}
+                detailKey="c_hep_type" detailValue={fm.medical.conditions.hepatitis.type} onDetailChange={v=>set("medical.conditions.hepatitis.type",v)}/>
+            <YN lblKey="c_hiv"       value={fm.medical.conditions.hiv}          onChange={v=>set("medical.conditions.hiv",v)}/>
+            <YN lblKey="c_cancer"    value={fm.medical.conditions.cancer}       onChange={v=>set("medical.conditions.cancer",v)}
+                detailKey="c_cancer_d" detailValue={fm.medical.conditions.cancer.detail} onDetailChange={v=>set("medical.conditions.cancer.detail",v)}/>
+            {fm.medical.conditions.cancer?.has && (
+              <label style={{display:"flex",alignItems:"center",gap:8,marginTop:-4,marginBottom:10,marginLeft:8,fontSize:12}}>
+                <input type="checkbox" checked={fm.medical.conditions.cancer.active||false} onChange={e=>set("medical.conditions.cancer.active",e.target.checked)}/>
+                <Bi k="c_cancer_active"/>
+              </label>
+            )}
+            <YN lblKey="c_osteo"     value={fm.medical.conditions.osteoporosis} onChange={v=>set("medical.conditions.osteoporosis",v)}/>
+            {fm.medical.conditions.osteoporosis?.has && (
+              <label style={{display:"flex",alignItems:"center",gap:8,marginTop:-4,marginBottom:10,marginLeft:8,fontSize:12}}>
+                <input type="checkbox" checked={fm.medical.conditions.osteoporosis.bisphosphonates||false} onChange={e=>set("medical.conditions.osteoporosis.bisphosphonates",e.target.checked)}/>
+                <Bi k="c_bisphos"/>
+              </label>
+            )}
+            <YN lblKey="c_bleed"     value={fm.medical.conditions.bleedingDisorder} onChange={v=>set("medical.conditions.bleedingDisorder",v)}/>
+            <YN lblKey="c_anticoag"  value={fm.medical.conditions.anticoagulants}   onChange={v=>set("medical.conditions.anticoagulants",v)}
+                detailKey="c_anticoag_drug" detailValue={fm.medical.conditions.anticoagulants.drug} onDetailChange={v=>set("medical.conditions.anticoagulants.drug",v)}/>
+          </div>
+
+          {/* SURGICAL */}
+          <H size={16} style={{marginBottom:10}}>{IL.s_surgical.en} <span style={{fontSize:12,color:T.muted,marginLeft:6,direction:"rtl"}}>{IL.s_surgical.ar}</span></H>
+          <YN lblKey="recentSurgery" value={fm.surgical.recentSurgery} onChange={v=>set("surgical.recentSurgery",v)}
+              detailKey="surgeryDetail" detailValue={fm.surgical.recentSurgery.detail} onDetailChange={v=>set("surgical.recentSurgery.detail",v)}/>
+          <BiInp lblKey="hospital" value={fm.surgical.hospitalizations} onChange={v=>set("surgical.hospitalizations",v)}/>
+
+          {/* WOMEN'S */}
+          {isFemale && (
+            <>
+              <H size={16} style={{marginTop:10,marginBottom:10}}>{IL.s_womens.en} <span style={{fontSize:12,color:T.muted,marginLeft:6,direction:"rtl"}}>{IL.s_womens.ar}</span></H>
+              <YN lblKey="pregnant"      value={fm.womens.pregnant} onChange={v=>set("womens.pregnant",v)}
+                  detailKey="trimester"  detailValue={fm.womens.pregnant.trimester} onDetailChange={v=>set("womens.pregnant.trimester",v)}/>
+              <YN lblKey="breastfeeding" value={fm.womens.breastfeeding} onChange={v=>set("womens.breastfeeding",v)}/>
+              <YN lblKey="hormonal"      value={fm.womens.hormonalContraception} onChange={v=>set("womens.hormonalContraception",v)}/>
+            </>
+          )}
+
+          {/* LIFESTYLE */}
+          <H size={16} style={{marginTop:18,marginBottom:10}}>{IL.s_lifestyle.en} <span style={{fontSize:12,color:T.muted,marginLeft:6,direction:"rtl"}}>{IL.s_lifestyle.ar}</span></H>
+          <YN lblKey="smoking" value={fm.lifestyle.smoking} onChange={v=>set("lifestyle.smoking",v)}
+              detailKey="cigsPerDay" detailType="number" detailValue={fm.lifestyle.smoking.cigsPerDay} onDetailChange={v=>set("lifestyle.smoking.cigsPerDay",parseInt(v)||0)}/>
+          <BiSel lblKey="alcohol" value={fm.lifestyle.alcohol} onChange={v=>set("lifestyle.alcohol",v)}
+            options={[{value:"none",lblKey:"al_none"},{value:"occasional",lblKey:"al_occasional"},{value:"regular",lblKey:"al_regular"}]}/>
+
+          {/* DENTAL */}
+          <H size={16} style={{marginTop:18,marginBottom:10}}>{IL.s_dental.en} <span style={{fontSize:12,color:T.muted,marginLeft:6,direction:"rtl"}}>{IL.s_dental.ar}</span></H>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
+            <BiInp lblKey="lastVisit" value={fm.dental.lastVisit} onChange={v=>set("dental.lastVisit",v)} placeholder="Month / Year"/>
+            <BiInp lblKey="lastXray"  value={fm.dental.lastXray}  onChange={v=>set("dental.lastXray",v)}  placeholder="Month / Year"/>
+            <BiSel lblKey="brushing"  value={fm.dental.brushing}  onChange={v=>set("dental.brushing",v)}
+              options={[{value:"twice",lblKey:"br_twice"},{value:"daily",lblKey:"br_daily"},{value:"weekly",lblKey:"br_weekly"},{value:"rare",lblKey:"br_rare"}]}/>
+            <BiSel lblKey="flossing"  value={fm.dental.flossing}  onChange={v=>set("dental.flossing",v)}
+              options={[{value:"daily",lblKey:"fl_daily"},{value:"sometimes",lblKey:"fl_sometimes"},{value:"never",lblKey:"fl_never"}]}/>
+          </div>
+          <YN lblKey="bleedingGums" value={fm.dental.bleedingGums} onChange={v=>set("dental.bleedingGums",v)}/>
+          <div style={{background:T.bg,borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+            <div style={{fontSize:11.5,fontWeight:600,color:T.muted,marginBottom:6}}><Bi k="sensitivity"/></div>
+            <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+              {[["hot","sens_hot"],["cold","sens_cold"],["sweet","sens_sweet"]].map(([k,lk])=>(
+                <label key={k} style={{display:"flex",alignItems:"center",gap:6,fontSize:12}}>
+                  <input type="checkbox" checked={!!fm.dental.sensitivity?.[k]} onChange={e=>set(`dental.sensitivity.${k}`,e.target.checked)}/>
+                  <Bi k={lk}/>
+                </label>
+              ))}
+            </div>
+          </div>
+          <YN lblKey="tmj"     value={fm.dental.tmjPain} onChange={v=>set("dental.tmjPain",v)}/>
+          <YN lblKey="bruxism" value={fm.dental.bruxism} onChange={v=>set("dental.bruxism",v)}/>
+          <div style={{background:T.bg,borderRadius:10,padding:"12px 14px",marginBottom:18}}>
+            <div style={{fontSize:11.5,fontWeight:600,color:T.muted,marginBottom:6}}><Bi k="prior"/></div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {[["orthodontics","pr_ortho"],["extractions","pr_extract"],["rootCanals","pr_rct"],["implants","pr_implants"],["gumSurgery","pr_gum"]].map(([k,lk])=>(
+                <label key={k} style={{display:"flex",alignItems:"center",gap:6,fontSize:12}}>
+                  <input type="checkbox" checked={!!fm.dental.prior?.[k]} onChange={e=>set(`dental.prior.${k}`,e.target.checked)}/>
+                  <Bi k={lk}/>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* CHIEF COMPLAINT */}
+          <H size={16} style={{marginBottom:10}}>{IL.s_complaint.en} <span style={{fontSize:12,color:T.muted,marginLeft:6,direction:"rtl"}}>{IL.s_complaint.ar}</span></H>
+          <Txta label={`${IL.complaint.en} / ${IL.complaint.ar}`} value={fm.complaint.text} onChange={e=>set("complaint.text",e.target.value)} style={{height:60,marginBottom:10}}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <BiInp lblKey="painScore" value={fm.complaint.painScore} onChange={v=>set("complaint.painScore",Math.max(0,Math.min(10,parseInt(v)||0)))} type="number"/>
+            <BiInp lblKey="duration"  value={fm.complaint.duration}  onChange={v=>set("complaint.duration",v)} placeholder="e.g. 3 days"/>
+          </div>
+        </div>
+
+        {/* FOOTER */}
+        <div style={{padding:"16px 24px",borderTop:`1px solid ${T.border}`,display:"flex",gap:10,justifyContent:"flex-end",position:"sticky",bottom:0,background:T.white}}>
+          <Btn v="ghost" onClick={onClose}>{IL.cancel.en} / {IL.cancel.ar}</Btn>
+          {canEdit && <Btn v="gold" onClick={handleSave} disabled={saving}>{saving?<><Spinner/> …</>:`${IL.save.en} / ${IL.save.ar}`}</Btn>}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// Confirmation prompt shown right after a new patient is saved.
+function IntakePromptModal({patientName, onYes, onSkip}) {
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <Card style={{maxWidth:440,width:"100%",padding:"24px 26px"}} cls="fade-up">
+        <div style={{fontSize:30,marginBottom:8,textAlign:"center"}}>📋</div>
+        <H size={20} style={{textAlign:"center",marginBottom:4}}>{IL.promptTitle.en}</H>
+        <div style={{fontSize:13,color:T.muted,textAlign:"center",marginBottom:6,direction:"rtl"}}>{IL.promptTitle.ar}</div>
+        <div style={{fontSize:12.5,color:T.text2,marginBottom:14,lineHeight:1.5}}>{IL.promptDesc.en}</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:18,lineHeight:1.5,direction:"rtl"}}>{IL.promptDesc.ar}</div>
+        {patientName && <div style={{fontSize:12,color:T.muted,marginBottom:12,textAlign:"center"}}>Patient: <strong style={{color:T.text}}>{patientName}</strong></div>}
+        <div style={{display:"flex",gap:10,flexDirection:"column"}}>
+          <Btn v="gold" onClick={onYes}>{IL.fillNow.en} / {IL.fillNow.ar}</Btn>
+          <Btn v="ghost" onClick={onSkip}>{IL.skip.en} / {IL.skip.ar}</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+
+function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatient,importPatients,toast,canSeeClinical,isMobile,role,canBrowsePatients}){
   const[q,setQ]=useState("");
   const[selId,setSelId]=useState(null);
   const[tab,setTab]=useState("Overview");
@@ -653,6 +1086,8 @@ function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatie
   const[rDue,setRDue]=useState(isoD(addD(now(),30)));
   const[showImport,setShowImport]=useState(false);
   const[showAddOld,setShowAddOld]=useState(false);
+  const[showIntake,setShowIntake]=useState(false);
+  const[intakePromptFor,setIntakePromptFor]=useState(null); // patient just created
 
   const pList=Object.values(patients);
   const filtered=q.trim()
@@ -685,7 +1120,7 @@ function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatie
   return(
     <div className="fade-up">
       {showImport && <ImportPatientsModal onClose={()=>setShowImport(false)} importPatients={importPatients} toast={toast}/>}
-      {showAddOld && <AddOldPatientModal  onClose={()=>setShowAddOld(false)} addPatient={addPatient} toast={toast}/>}
+      {showAddOld && <AddOldPatientModal  onClose={()=>setShowAddOld(false)} addPatient={addPatient} toast={toast} onAdded={(p)=>setIntakePromptFor(p)}/>}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12,marginBottom:24}}>
         <H size={30}>Patients</H>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -737,10 +1172,17 @@ function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatie
                   {sel.age&&<span>🎂 {sel.age}y</span>}
                   {sel.gender&&<span>{sel.gender==="Male"?"👨":"sel.gender==='Female'"?"👩":"👶"} {sel.gender}</span>}
                 </div>
+                {sel.intakeForm && computePatientFlags(sel.intakeForm).length>0 && (
+                  <div style={{marginTop:8}}><PatientFlags intake={sel.intakeForm} compact/></div>
+                )}
               </div>
               <div style={{display:"flex",borderBottom:`1px solid ${T.border}`}}>
-                {["Overview","Visits","Recalls"].map(t=>(
-                  <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"12px 0",border:"none",cursor:"pointer",fontFamily:"Sora",fontSize:13,fontWeight:tab===t?600:400,color:tab===t?T.gold:T.muted,background:T.white,borderBottom:tab===t?`2px solid ${T.gold}`:"2px solid transparent",transition:"all 0.15s"}}>{t}</button>
+                {["Overview","Medical","Visits","Recalls"].map(t=>(
+                  <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"12px 0",border:"none",cursor:"pointer",fontFamily:"Sora",fontSize:13,fontWeight:tab===t?600:400,color:tab===t?T.gold:T.muted,background:T.white,borderBottom:tab===t?`2px solid ${T.gold}`:"2px solid transparent",transition:"all 0.15s",position:"relative"}}>
+                    {t}
+                    {t==="Medical" && sel?.intakeForm && computePatientFlags(sel.intakeForm).some(f=>f.level==="red") && <span style={{position:"absolute",top:8,right:"calc(50% - 24px)",width:6,height:6,background:T.red,borderRadius:"50%"}}/>}
+                    {t==="Medical" && !sel?.intakeForm && <span style={{position:"absolute",top:8,right:"calc(50% - 24px)",width:6,height:6,background:T.amber,borderRadius:"50%"}}/>}
+                  </button>
                 ))}
               </div>
               <div style={{padding:"16px 20px",maxHeight:460,overflowY:"auto"}}>
@@ -775,11 +1217,54 @@ function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatie
                     <Btn v="gold" sm onClick={createRecall}>+ Create Recall</Btn>
                   </div>
                 )}
+                {tab==="Medical"&&(
+                  sel.intakeForm
+                    ? (
+                      <div>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                          <div style={{fontSize:11,color:T.muted}}>{IL.completedOn.en}: {sel.intakeUpdatedAt?fmtDT(sel.intakeUpdatedAt):"—"}</div>
+                          {/* Receptionist loses edit access once the form has been saved at least once */}
+                          {role!=="receptionist" && <Btn v="ghost" sm onClick={()=>setShowIntake(true)}>{IL.edit.en} / {IL.edit.ar}</Btn>}
+                        </div>
+                        <IntakeFormView intake={sel.intakeForm}/>
+                      </div>
+                    )
+                    : (
+                      <div style={{padding:"18px 4px",textAlign:"center"}}>
+                        <div style={{background:T.amberBg,borderLeft:`3px solid ${T.amber}`,borderRadius:"0 10px 10px 0",padding:"12px 14px",fontSize:13,color:T.text2,textAlign:"left",marginBottom:14}}>
+                          ⚠ {IL.incomplete.en}<div style={{fontSize:11,color:T.muted,marginTop:3,direction:"rtl"}}>{IL.incomplete.ar}</div>
+                        </div>
+                        <Btn v="gold" onClick={()=>setShowIntake(true)}>📋 {IL.completeNow.en} / {IL.completeNow.ar}</Btn>
+                      </div>
+                    )
+                )}
               </div>
             </Card>
           </div>
         )}
       </div>
+      {/* Intake form modal (edit/fill) */}
+      {showIntake && sel && (
+        <IntakeFormModal
+          patient={sel}
+          initialIntake={sel.intakeForm}
+          canEdit={role!=="receptionist" || !sel.intakeForm}
+          locked={role==="receptionist" && !!sel.intakeForm}
+          onClose={()=>setShowIntake(false)}
+          onSave={async(form)=>{
+            try{ await patchPatient(sel.id,{intakeForm:form}); toast("Intake form saved"); }
+            catch(e){ toast(`Error: ${e.message}`); throw e; }
+          }}
+        />
+      )}
+      {/* Post-creation prompt after a new patient is added */}
+      {intakePromptFor && (
+        <IntakePromptModal
+          patientName={intakePromptFor.name}
+          onYes={()=>{ setSelId(intakePromptFor.id); setTab("Medical"); setShowIntake(true); setIntakePromptFor(null); }}
+          onSkip={()=>setIntakePromptFor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1105,7 +1590,7 @@ function Stat({label,value,color,bg}){
 }
 
 /* ════════════════════════════════════════════════ ADD OLD PATIENT MODAL (v2) */
-function AddOldPatientModal({onClose, addPatient, toast}){
+function AddOldPatientModal({onClose, addPatient, toast, onAdded}){
   const[name,setName]=useState("");
   const[phone,setPhone]=useState("");
   const[legacyId,setLegacyId]=useState("");
@@ -1122,13 +1607,14 @@ function AddOldPatientModal({onClose, addPatient, toast}){
     if(Object.keys(errs).length){ setErrors(errs); return; }
     setSaving(true);
     try{
-      await addPatient({
+      const p=await addPatient({
         name:name.trim(), phone:phone.replace(/\D/g,""), email:email.trim(),
         age:age?parseInt(age):null, gender:gender||null,
         legacyId:legacyId.trim()||null,
       });
-      toast("Old patient added");
+      toast("Patient added");
       onClose();
+      onAdded && onAdded(p);
     }catch(e){ toast(`Error: ${e.message}`); }
     finally{ setSaving(false); }
   };
@@ -2015,9 +2501,12 @@ function AdminServices({categories, services, addCategory, patchCategory, remove
 }
 
 /* ════════════════════════════════════════════════ MOBILE NAV */
-function MobileNav({page,setPage,recalls,onSignOut,role}){
+function MobileNav({page,setPage,recalls,invoices=[],onSignOut,role}){
   const[more,setMore]=useState(false);
   const pendingR=Object.values(recalls).filter(r=>r.status==="Pending").length;
+  const pendingDrafts=invoices.filter(i=>i.status==="draft").length;
+  const showDraftBadge=pendingDrafts>0 && ["admin","senior_doctor","receptionist"].includes(role);
+  const moreBadgeTotal=pendingR + (showDraftBadge?pendingDrafts:0);
   const tabs=[
     {key:"Dashboard",   icon:"🏠",label:"Home"},
     {key:"Appointments",icon:"📅",label:"Today"},
@@ -2026,12 +2515,12 @@ function MobileNav({page,setPage,recalls,onSignOut,role}){
     {key:"more",        icon:"···",label:"More"},
   ];
   const moreItems = [
-    {key:"Followups",icon:"🔔",label:"Follow-ups",badge:pendingR, roles:["admin","senior_doctor","dentist","receptionist"]},
-    {key:"Billing",  icon:"₤", label:"Billing",   badge:0,        roles:["admin","senior_doctor","dentist","receptionist"]},
-    {key:"Revenue",  icon:"▲", label:"Revenue",   badge:0,        roles:["admin","senior_doctor"]},
-    {key:"Messages", icon:"💬",label:"Messages",  badge:0,        roles:["admin","senior_doctor","dentist","receptionist"]},
-    {key:"Admin",    icon:"⚙", label:"Admin",     badge:0,        roles:["admin"]},
-    {key:"Settings", icon:"⚙️",label:"Settings",  badge:0,        roles:["admin","senior_doctor","dentist","receptionist"]},
+    {key:"Followups",icon:"🔔",label:"Follow-ups",badge:pendingR,                       roles:["admin","senior_doctor","dentist","receptionist"]},
+    {key:"Billing",  icon:"₤", label:"Billing",   badge:showDraftBadge?pendingDrafts:0, roles:["admin","senior_doctor","dentist","receptionist"]},
+    {key:"Revenue",  icon:"▲", label:"Revenue",   badge:0,                              roles:["admin","senior_doctor"]},
+    {key:"Messages", icon:"💬",label:"Messages",  badge:0,                              roles:["admin","senior_doctor","dentist","receptionist"]},
+    {key:"Admin",    icon:"⚙", label:"Admin",     badge:0,                              roles:["admin"]},
+    {key:"Settings", icon:"⚙️",label:"Settings",  badge:0,                              roles:["admin","senior_doctor","dentist","receptionist"]},
   ].filter(i => i.roles.includes(role));
   return(
     <>
@@ -2045,7 +2534,7 @@ function MobileNav({page,setPage,recalls,onSignOut,role}){
           );
           return(
             <button key={tab.key} onClick={()=>{if(tab.key==="more"){setMore(v=>!v);}else{setPage(tab.key);setMore(false);}}} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",border:"none",background:"transparent",padding:"10px 0 8px",cursor:"pointer",gap:3,position:"relative"}}>
-              {tab.key==="more"&&pendingR>0&&<span style={{position:"absolute",top:8,right:"calc(50% - 16px)",background:T.red,color:"#fff",fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:99}}>{pendingR}</span>}
+              {tab.key==="more"&&moreBadgeTotal>0&&<span style={{position:"absolute",top:8,right:"calc(50% - 16px)",background:T.red,color:"#fff",fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:99}}>{moreBadgeTotal}</span>}
               <span style={{fontSize:20}}>{tab.icon}</span>
               <span style={{fontSize:10,fontWeight:active?600:400,color:active?T.gold:T.muted,fontFamily:"Sora"}}>{tab.label}</span>
               {active&&<div style={{position:"absolute",bottom:0,width:20,height:2,background:T.gold,borderRadius:2}}/>}
@@ -2092,8 +2581,9 @@ const NAV=[
 ];
 const TOOTH=`url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 6 C20 6 12 13 12 22 C12 30 15 36 18 42 L21 54 C21 55.5 22.5 57 24 57 C25.5 57 27 55.5 27 54 L27 46 C27 44 28.5 42.5 30 42.5 C31.5 42.5 33 44 33 46 L33 54 C33 55.5 34.5 57 36 57 C37.5 57 39 55.5 39 54 L42 42 C45 36 48 30 48 22 C48 13 40 6 30 6Z' fill='white' fill-opacity='0.025'/%3E%3C/svg%3E")`;
 
-function Sidebar({page,setPage,patients,appointments,recalls,messages,onSignOut,role}){
+function Sidebar({page,setPage,patients,appointments,recalls,messages,invoices=[],onSignOut,role}){
   const pendingR=Object.values(recalls).filter(r=>r.status==="Pending").length;
+  const pendingDrafts=invoices.filter(i=>i.status==="draft").length;
   const visibleNav = NAV.filter(n => n.roles.includes(role));
   return(
     <aside style={{width:224,background:T.sidebar,display:"flex",flexDirection:"column",flexShrink:0,height:"100vh",position:"sticky",top:0,overflowY:"auto",backgroundImage:TOOTH,backgroundSize:"60px 60px"}}>
@@ -2104,7 +2594,9 @@ function Sidebar({page,setPage,patients,appointments,recalls,messages,onSignOut,
       <nav style={{padding:"13px 10px",flex:1}}>
         {visibleNav.map(n=>{
           const active=page===n.key;
-          const badge=n.key==="Followups"&&pendingR>0?pendingR:null;
+          let badge=null;
+          if (n.key==="Followups" && pendingR>0) badge=pendingR;
+          if (n.key==="Billing" && pendingDrafts>0 && ["admin","senior_doctor","receptionist"].includes(role)) badge=pendingDrafts;
           return(
             <button key={n.key} onClick={()=>setPage(n.key)} className="nav-btn"
               style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"10px 12px",borderRadius:10,border:"none",cursor:"pointer",marginBottom:2,fontFamily:"Sora",fontSize:13,fontWeight:active?600:400,textAlign:"left",background:active?`${T.gold}1A`:"transparent",color:active?T.goldL:"rgba(255,255,255,0.5)",borderLeft:active?`2px solid ${T.gold}`:"2px solid transparent"}}>
@@ -2197,7 +2689,7 @@ export default function CRM({ role="admin", userId="", canSeeClinical=true, user
     <>
       <style>{G}</style>
       <div style={{display:"flex",height:"100vh",fontFamily:"'Sora',sans-serif",overflow:"hidden"}}>
-        {!isMobile&&<Sidebar page={safePage} setPage={setPage} patients={patients} appointments={appointments} recalls={recalls} messages={messages} onSignOut={handleSignOut} role={role}/>}
+        {!isMobile&&<Sidebar page={safePage} setPage={setPage} patients={patients} appointments={appointments} recalls={recalls} messages={messages} invoices={invoices} onSignOut={handleSignOut} role={role}/>}
         <main style={{flex:"1 1 0",minWidth:0,width:0,overflowY:"auto",overflowX:"hidden",padding:isMobile?"20px 16px 100px":"34px 38px",background:T.bg}}>
           {safePage==="Dashboard"    && <Dashboard    {...sharedProps} userFullName={userFullName}/>}
           {safePage==="Appointments" && <Appointments {...sharedProps}/>}
@@ -2214,7 +2706,7 @@ export default function CRM({ role="admin", userId="", canSeeClinical=true, user
           {safePage==="Settings"     && <Settings     toast={showToast}/>}
         </main>
       </div>
-      {isMobile&&<MobileNav page={safePage} setPage={setPage} recalls={recalls} onSignOut={handleSignOut} role={role}/>}
+      {isMobile&&<MobileNav page={safePage} setPage={setPage} recalls={recalls} invoices={invoices} onSignOut={handleSignOut} role={role}/>}
       <Toast msg={toast} onClose={()=>setToast("")}/>
     </>
   );
