@@ -41,10 +41,19 @@ export function AuthProvider({ children }) {
     role:    profile?.role ?? null,
     loading: session === undefined,
     isAdmin:        profile?.role === "admin",
+    isSeniorDoctor: profile?.role === "senior_doctor",
     isDentist:      profile?.role === "dentist",
     isReceptionist: profile?.role === "receptionist",
-    // Clinical data access = admin or dentist
-    canSeeClinical: profile?.role === "admin" || profile?.role === "dentist",
+    // Clinical data access = admin, senior_doctor, or dentist
+    canSeeClinical: ["admin","senior_doctor","dentist"].includes(profile?.role),
+    // Patient list browsing = admin or senior_doctor only
+    canBrowsePatients: ["admin","senior_doctor"].includes(profile?.role),
+    // Revenue analytics = admin or senior_doctor only
+    canSeeRevenue: ["admin","senior_doctor"].includes(profile?.role),
+    // Closing draft invoices = admin, senior_doctor, or receptionist
+    canCloseInvoices: ["admin","senior_doctor","receptionist"].includes(profile?.role),
+    // Creating invoices (drafts) = admin, senior_doctor, or dentist
+    canCreateInvoices: ["admin","senior_doctor","dentist"].includes(profile?.role),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

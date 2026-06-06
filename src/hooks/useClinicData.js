@@ -197,6 +197,12 @@ export function useClinicData() {
     return inv;
   }, []);
 
+  const closeInvoice = useCallback(async (invoiceId, paymentMethod) => {
+    const inv = await db.closeInvoice(invoiceId, paymentMethod);
+    setInvoices(prev => prev.map(i => i.id === invoiceId ? inv : i));
+    return inv;
+  }, []);
+
   return {
     // State
     patients, appointments, recalls, messages,
@@ -210,7 +216,7 @@ export function useClinicData() {
     addDentist, patchDentist, removeDentist,
     addCategory, patchCategory, removeCategory,
     addService, patchService, removeService,
-    addInvoice,
+    addInvoice, closeInvoice,
     reload: loadAll,
   };
 }

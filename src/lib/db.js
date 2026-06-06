@@ -62,8 +62,13 @@ export function normalizeInvoice(inv) {
     subtotal: Number(inv.subtotal) || 0,
     discount: Number(inv.discount) || 0,
     total: Number(inv.total) || 0,
-    paymentMethod: inv.payment_method || "Cash",
-    paidAt: new Date(inv.paid_at),
+    paymentMethod: inv.payment_method || null,
+    paidAt: inv.paid_at ? new Date(inv.paid_at) : null,
+    status: inv.status || 'paid',
+    submittedAt: inv.submitted_at ? new Date(inv.submitted_at) : null,
+    closedBy: inv.closed_by || null,
+    createdBy: inv.created_by || null,
+    createdAt: inv.created_at ? new Date(inv.created_at) : null,
     notes: inv.notes || "",
     items: (inv.invoice_items || []).map(normalizeInvoiceItem)
                                     .sort((a, b) => a.sortOrder - b.sortOrder),
@@ -396,14 +401,16 @@ export async function getInvoice(id) {
 }
 
 // items: [{ serviceId, name, category, price, quantity }]
+// status: 'draft' (doctor submitting) or 'paid' (direct close, admin/receptionist)
 export async function createInvoice({
   appointmentId = null,
   patient,
   dentistName = "",
   items = [],
   discount = 0,
-  paymentMethod = "Cash",
+  paymentMethod = null,
   notes = "",
+  status = "paid",
 }) {
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -419,6 +426,9 @@ export async function createInvoice({
   const subtotal = lineItems.reduce((sum, it) => sum + Number(it.line_total), 0);
   const total    = Math.max(0, subtotal - (Number(discount) || 0));
 
+  const isDraft = status === "draft";
+  const nowIso  = new Date().toISOString();
+
   const { data: inv, error: invErr } = await supabase.from("invoices")
     .insert({
       appointment_id: appointmentId,
@@ -428,7 +438,10 @@ export async function createInvoice({
       patient_legacy_id_snapshot: patient?.legacyId || "",
       dentist_name_snapshot: dentistName,
       subtotal, discount: Number(discount) || 0, total,
-      payment_method: paymentMethod,
+      payment_method: isDraft ? null : (paymentMethod || "Cash"),
+      paid_at: isDraft ? null : nowIso,
+      status: isDraft ? "draft" : "paid",
+      submitted_at: isDraft ? nowIso : null,
       notes,
       created_by: user.id,
     })
@@ -445,6 +458,22 @@ export async function createInvoice({
   }
 
   return await getInvoice(inv.id);
+}
+
+// Close a draft invoice — only payment_method, paid_at, closed_by are set
+export async function closeInvoice(invoiceId, paymentMethod) {
+  const { data: { user } } = await supabase.auth.getUser();
+  const { error } = await supabase.from("invoices")
+    .update({
+      status: "paid",
+      payment_method: paymentMethod || "Cash",
+      paid_at: new Date().toISOString(),
+      closed_by: user.id,
+    })
+    .eq("id", invoiceId)
+    .eq("status", "draft"); // safety: only flip drafts
+  if (error) throw error;
+  return await getInvoice(invoiceId);
 }
 
 export async function deleteInvoice(id) {

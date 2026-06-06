@@ -8,7 +8,9 @@ import Login from "./pages/Login";
 import CRM from "./CRM"; // your dental-crm.jsx renamed to CRM.jsx
 
 function AppInner() {
-  const { loading, session, profile, role, canSeeClinical } = useAuth();
+  const auth = useAuth();
+  const { loading, session, profile, role, canSeeClinical,
+          canBrowsePatients, canSeeRevenue, canCloseInvoices, canCreateInvoices } = auth;
 
   // Waiting for session check
   if (loading) {
@@ -36,12 +38,18 @@ function AppInner() {
     );
   }
 
-  // CRM receives role info — hides clinical data for receptionists
+  // CRM receives role + capability flags — hides clinical data for receptionists,
+  // restricts patient browsing and revenue to admin + senior_doctor, etc.
   return (
     <CRM
       role={role}
-      canSeeClinical={canSeeClinical}
+      userId={session.user.id}
       userFullName={profile.full_name}
+      canSeeClinical={canSeeClinical}
+      canBrowsePatients={canBrowsePatients}
+      canSeeRevenue={canSeeRevenue}
+      canCloseInvoices={canCloseInvoices}
+      canCreateInvoices={canCreateInvoices}
     />
   );
 }

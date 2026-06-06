@@ -239,19 +239,25 @@ function AutoRecallModal({appointment, patient, onConfirm, onDismiss}){
 }
 
 /* ════════════════════════════════════════════════ DASHBOARD */
-function Dashboard({patients,appointments,recalls,userFullName,isMobile}){
+function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userId,role,isMobile}){
   const pList=Object.values(patients);
   const apList=Object.values(appointments);
   const todayD=today();
   const todayAps=apList.filter(a=>{const d=new Date(a.dt);d.setHours(0,0,0,0);return d.getTime()===todayD.getTime();}).sort((a,b)=>a.dt-b.dt);
   const upcoming=apList.filter(a=>a.dt>=now()&&!["Cancelled","Completed"].includes(a.status)).sort((a,b)=>a.dt-b.dt).slice(0,5);
   const pendingR=Object.values(recalls).filter(r=>r.status==="Pending");
-  const stats=[
-    {label:"Patients",       val:pList.length,    icon:"👤",accent:T.blueBg},
-    {label:"Today",          val:todayAps.length, icon:"📅",accent:T.amberBg},
-    {label:"Pending Recalls",val:pendingR.length, icon:"🔔",accent:T.redBg},
-    {label:"Completed",      val:apList.filter(a=>a.status==="Completed").length,icon:"✅",accent:T.greenBg},
-  ];
+
+  // Doctor's stale drafts: their submitted invoices that reception hasn't closed in 24h+
+  const isDoctorRole=["dentist","senior_doctor","admin"].includes(role);
+  const myStaleDrafts = isDoctorRole && userId ? invoices.filter(i=>{
+    if(i.status!=="draft") return false;
+    if(i.createdBy!==userId) return false;
+    const t=(i.submittedAt?.getTime?.())||(i.createdAt?.getTime?.())||0;
+    return Date.now()-t >= 24*3600*1000;
+  }) : [];
+  const oldestStaleH = myStaleDrafts.length>0
+    ? Math.floor((Date.now()-Math.min(...myStaleDrafts.map(i=>(i.submittedAt?.getTime?.())||(i.createdAt?.getTime?.())||Date.now())))/3600000)
+    : 0;
 
   return(
     <div className="fade-up">
@@ -267,8 +273,27 @@ function Dashboard({patients,appointments,recalls,userFullName,isMobile}){
         </Card>}
       </div>
 
+      {myStaleDrafts.length>0 && (
+        <Card cls="fade-up" style={{padding:"14px 18px",marginBottom:18,background:T.redBg,borderLeft:`4px solid ${T.red}`,display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+          <div style={{fontSize:22}}>⏰</div>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontSize:13,fontWeight:700,color:T.red}}>
+              {myStaleDrafts.length} invoice{myStaleDrafts.length!==1?"s":""} awaiting reception closure
+            </div>
+            <div style={{fontSize:11,color:T.text2,marginTop:2}}>
+              Oldest submitted {oldestStaleH}h ago. Check with reception so patients aren't waiting.
+            </div>
+          </div>
+        </Card>
+      )}
+
       <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?10:14,marginBottom:isMobile?20:24}}>
-        {stats.map((s,i)=>(
+        {[
+    {label:"Patients",       val:pList.length,    icon:"👤",accent:T.blueBg},
+    {label:"Today",          val:todayAps.length, icon:"📅",accent:T.amberBg},
+    {label:"Pending Recalls",val:pendingR.length, icon:"🔔",accent:T.redBg},
+    {label:"Completed",      val:apList.filter(a=>a.status==="Completed").length,icon:"✅",accent:T.greenBg},
+  ].map((s,i)=>(
           <Card key={s.label} cls={`fade-up stagger-${i+1}`} style={{padding:isMobile?"14px 16px":"20px 22px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div>
@@ -1136,24 +1161,31 @@ function AddOldPatientModal({onClose, addPatient, toast}){
   );
 }
 
-/* ════════════════════════════════════════════════ BILLING (v2) */
-function Billing({patients,appointments,services,categories,invoices,addInvoice,toast,isMobile,role}){
+/* ════════════════════════════════════════════════ BILLING (v3) — draft / close workflow */
+function Billing({patients,appointments,services,categories,invoices,addInvoice,closeInvoice,
+                  toast,isMobile,role,userId,canCloseInvoices,canCreateInvoices}){
   const[selectedAppt,setSelectedAppt]=useState(null);
   const[selectedPid,setSelectedPid]=useState("");
   const[items,setItems]=useState([]); // [{serviceId,name,category,price,quantity}]
   const[discount,setDiscount]=useState(0);
-  const[paymentMethod,setPaymentMethod]=useState("Cash");
   const[notes,setNotes]=useState("");
-  const[savedInvoice,setSavedInvoice]=useState(null);
+  const[savedDraft,setSavedDraft]=useState(null);
+  const[closeFor,setCloseFor]=useState(null); // invoice being closed
   const[saving,setSaving]=useState(false);
 
-  // Completed appointments without an invoice yet
+  // Completed appointments that haven't been billed yet
   const completedNoInvoice = useMemo(()=>{
     const billedApptIds=new Set(invoices.map(i=>i.appointmentId).filter(Boolean));
     return Object.values(appointments)
       .filter(a=>a.status==="Completed" && !billedApptIds.has(a.id))
       .sort((a,b)=>b.dt-a.dt);
   },[appointments,invoices]);
+
+  // Draft invoices awaiting close
+  const pendingDrafts = useMemo(()=>
+    invoices.filter(i=>i.status==="draft")
+            .sort((a,b)=>(a.submittedAt||a.createdAt)-(b.submittedAt||b.createdAt)),
+  [invoices]);
 
   const serviceGroups = useMemo(()=>groupServicesByCategory(services||[],categories||[]),[services,categories]);
   const categoryById  = useMemo(()=>Object.fromEntries((categories||[]).map(c=>[c.id,c])),[categories]);
@@ -1165,21 +1197,20 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
   const onSelectAppt=(ap)=>{
     setSelectedAppt(ap);
     setSelectedPid(ap.patientId);
-    // Pre-populate one line item from the appointment service if it matches
     const matchedSvc=(services||[]).find(s=>s.name===ap.service);
     if(matchedSvc){
       setItems([{serviceId:matchedSvc.id,name:matchedSvc.name,category:categoryById[matchedSvc.categoryId]?.name||"",price:matchedSvc.price,quantity:1}]);
     }else{
       setItems([{serviceId:null,name:ap.service||"Service",category:"",price:0,quantity:1}]);
     }
-    setDiscount(0); setPaymentMethod("Cash"); setNotes(""); setSavedInvoice(null);
+    setDiscount(0); setNotes(""); setSavedDraft(null);
   };
 
   const startManual=()=>{
     setSelectedAppt(null);
     setSelectedPid(Object.values(patients)[0]?.id||"");
     setItems([{serviceId:null,name:"",category:"",price:0,quantity:1}]);
-    setDiscount(0); setPaymentMethod("Cash"); setNotes(""); setSavedInvoice(null);
+    setDiscount(0); setNotes(""); setSavedDraft(null);
   };
 
   const addLine=()=>setItems(prev=>[...prev,{serviceId:null,name:"",category:"",price:0,quantity:1}]);
@@ -1193,7 +1224,7 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
     updateLine(i,{serviceId:s.id,name:s.name,category:categoryById[s.categoryId]?.name||"",price:s.price});
   };
 
-  const saveInvoice=async(thenPrint=false)=>{
+  const submitDraft=async()=>{
     if(!selectedPid){ toast("Select a patient"); return; }
     const validItems=items.filter(it=>it.name && it.name.trim());
     if(!validItems.length){ toast("Add at least one service"); return; }
@@ -1206,29 +1237,34 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
         dentistName: selectedAppt?.dentist || "",
         items: validItems,
         discount: Number(discount)||0,
-        paymentMethod, notes,
+        notes,
+        status: "draft",
       });
-      setSavedInvoice(inv);
-      toast(`Invoice ${inv.number} created`);
-      if(thenPrint) setTimeout(()=>printInvoice(inv,patient),200);
+      setSavedDraft(inv);
+      toast(`Draft ${inv.number} submitted to reception`);
     }catch(e){ toast(`Error: ${e.message}`); }
     finally{ setSaving(false); }
   };
 
-  if(savedInvoice){
-    const p=patients[selectedPid]||{name:savedInvoice.patientName,phone:savedInvoice.patientPhone};
+  const isDoctorOnly = canCreateInvoices && !canCloseInvoices;          // dentist
+  const isReceptionistOnly = canCloseInvoices && !canCreateInvoices;    // receptionist
+  const isBoth = canCreateInvoices && canCloseInvoices;                 // admin / senior_doctor
+
+  // Submitted-draft confirmation screen for doctors
+  if(savedDraft){
+    const p=patients[selectedPid]||{name:savedDraft.patientName,phone:savedDraft.patientPhone};
     return(
       <div className="fade-up">
-        <H size={30} style={{marginBottom:24}}>Invoice Created</H>
+        <H size={30} style={{marginBottom:24}}>Draft Submitted</H>
         <Card style={{padding:24,maxWidth:520}}>
           <div style={{textAlign:"center",marginBottom:18}}>
-            <div style={{fontSize:36,marginBottom:8}}>✅</div>
-            <H size={22}>Invoice #{savedInvoice.number}</H>
-            <div style={{color:T.muted,fontSize:13,marginTop:6}}>{p.name} · {fmtEGP(savedInvoice.total)}</div>
+            <div style={{fontSize:36,marginBottom:8}}>📤</div>
+            <H size={22}>Draft #{savedDraft.number}</H>
+            <div style={{color:T.muted,fontSize:13,marginTop:6}}>{p.name} · {fmtEGP(savedDraft.total)}</div>
+            <div style={{color:T.amber,fontSize:12,marginTop:8,fontWeight:600}}>Waiting for reception to close.</div>
           </div>
           <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-            <Btn v="gold" onClick={()=>printInvoice(savedInvoice,p)}>🖨 Print Invoice</Btn>
-            <Btn v="ghost" onClick={()=>{setSavedInvoice(null);setSelectedAppt(null);setSelectedPid("");setItems([]);}}>+ New Invoice</Btn>
+            <Btn v="gold" onClick={()=>{setSavedDraft(null);setSelectedAppt(null);setSelectedPid("");setItems([]);}}>+ New Draft</Btn>
           </div>
         </Card>
       </div>
@@ -1237,108 +1273,150 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
 
   return(
     <div className="fade-up">
+      {closeFor && <CloseInvoiceModal invoice={closeFor} onClose={()=>setCloseFor(null)} closeInvoice={closeInvoice} toast={toast}/>}
+
       <H size={30} style={{marginBottom:8}}>Billing</H>
-      <div style={{color:T.muted,fontSize:13,marginBottom:20}}>Create invoices from completed appointments or as walk-ins.</div>
-
-      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1.4fr",gap:18,alignItems:"start"}}>
-        {/* LEFT: Pending appointments */}
-        <Card style={{padding:0,overflow:"hidden"}}>
-          <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div style={{fontSize:13,fontWeight:600}}>Awaiting Invoice</div>
-            <Btn v="ghost" sm onClick={startManual}>+ Walk-in</Btn>
-          </div>
-          {completedNoInvoice.length===0
-            ? <div style={{padding:24,textAlign:"center",color:T.muted,fontSize:13}}>No pending invoices.</div>
-            : completedNoInvoice.slice(0,30).map((ap,i)=>(
-              <div key={ap.id} className="row-hover" onClick={()=>onSelectAppt(ap)}
-                style={{padding:"12px 18px",cursor:"pointer",borderBottom:i<Math.min(completedNoInvoice.length,30)-1?`1px solid ${T.border}`:"none",borderLeft:selectedAppt?.id===ap.id?`3px solid ${T.gold}`:"3px solid transparent",background:selectedAppt?.id===ap.id?`${T.gold}06`:"transparent"}}>
-                <div style={{fontWeight:600,fontSize:13}}>{ap.patient?.name||"—"}{ap.patient?.legacyId&&<span style={{marginLeft:6,fontSize:10,padding:"1px 5px",background:T.amberBg,color:T.amber,borderRadius:4}}>#{ap.patient.legacyId}</span>}</div>
-                <div style={{fontSize:11,color:T.muted,marginTop:3}}>{ap.service} · {fmtD(ap.dt)} · {ap.dentist}</div>
-              </div>
-            ))
-          }
-        </Card>
-
-        {/* RIGHT: Invoice builder */}
-        <Card style={{padding:isMobile?"16px 14px":"22px 24px"}}>
-          {!selectedPid ? (
-            <div style={{textAlign:"center",padding:"40px 20px",color:T.muted}}>
-              <div style={{fontSize:32,marginBottom:8}}>📄</div>
-              <div style={{fontSize:14}}>Pick a completed appointment from the left, or click "+ Walk-in" to start a new invoice.</div>
-            </div>
-          ) : (
-            <>
-              <H size={18} style={{marginBottom:12}}>Invoice Details</H>
-              {!selectedAppt && (
-                <Sel label="Patient" value={selectedPid} onChange={e=>setSelectedPid(e.target.value)} style={{marginBottom:14}}>
-                  {Object.values(patients).map(p=>(
-                    <option key={p.id} value={p.id}>{p.name} — {p.phone}{p.legacyId?` · #${p.legacyId}`:""}</option>
-                  ))}
-                </Sel>
-              )}
-              {selectedAppt && (
-                <div style={{background:T.bg,borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.muted}}>
-                  Linked to: <strong style={{color:T.text}}>{selectedAppt.patient?.name}</strong> · {fmtD(selectedAppt.dt)} · {selectedAppt.dentist}
-                </div>
-              )}
-
-              {/* Line items */}
-              <div style={{marginBottom:8}}><Lbl>Services</Lbl></div>
-              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
-                {items.map((it,i)=>(
-                  <div key={i} style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"2fr 70px 100px 26px",gap:8,alignItems:"end"}}>
-                    <Sel value={it.serviceId||"__custom"} onChange={e=>{ if(e.target.value==="__custom"){updateLine(i,{serviceId:null});}else{onPickService(i,e.target.value);} }}>
-                      <option value="__custom">— Custom / type below —</option>
-                      {Object.entries(serviceGroups).map(([cat,list])=>(
-                        <optgroup key={cat} label={cat}>{list.map(s=><option key={s.id} value={s.id}>{s.name}{s.price>0?` · ${fmtEGP(s.price)}`:""}</option>)}</optgroup>
-                      ))}
-                    </Sel>
-                    {!it.serviceId && (
-                      <input value={it.name} onChange={e=>updateLine(i,{name:e.target.value})} placeholder="Service name" style={{gridColumn:isMobile?"1":"1 / span 1",border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,fontFamily:"Sora"}}/>
-                    )}
-                    <input type="number" min="1" value={it.quantity} onChange={e=>updateLine(i,{quantity:e.target.value})} style={{border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,fontFamily:"Sora",textAlign:"center"}}/>
-                    <input type="number" min="0" value={it.price} onChange={e=>updateLine(i,{price:e.target.value})} placeholder="Price" style={{border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,fontFamily:"Sora"}}/>
-                    <button onClick={()=>removeLine(i)} title="Remove" style={{border:"none",background:"transparent",color:T.red,fontSize:18,cursor:"pointer",padding:0}}>×</button>
-                  </div>
-                ))}
-              </div>
-              <Btn v="ghost" sm onClick={addLine} style={{marginBottom:16}}>+ Add line</Btn>
-
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-                <Inp label="Discount (EGP)" type="number" value={discount} onChange={e=>setDiscount(e.target.value)}/>
-                <Sel label="Payment Method" value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value)}>
-                  {PAY_METHODS.map(m=><option key={m}>{m}</option>)}
-                </Sel>
-              </div>
-              <Txta label="Notes (optional)" value={notes} onChange={e=>setNotes(e.target.value)} style={{height:54,marginBottom:16}}/>
-
-              {/* Totals */}
-              <div style={{background:T.bg,borderRadius:10,padding:"14px 18px",marginBottom:16,fontFamily:"Sora"}}>
-                <Row label="Subtotal" value={fmtEGP(subtotal)}/>
-                {(Number(discount)||0)>0 && <Row label="Discount" value={`− ${fmtEGP(discount)}`} color={T.red}/>}
-                <div style={{height:1,background:T.border,margin:"8px 0"}}/>
-                <Row label="TOTAL" value={fmtEGP(total)} big/>
-              </div>
-
-              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                <Btn v="gold" onClick={()=>saveInvoice(true)} disabled={saving}>{saving?<><Spinner/> Saving…</>:"Save & Print"}</Btn>
-                <Btn v="ghost" onClick={()=>saveInvoice(false)} disabled={saving}>Save Without Printing</Btn>
-              </div>
-            </>
-          )}
-        </Card>
+      <div style={{color:T.muted,fontSize:13,marginBottom:20}}>
+        {isDoctorOnly        && "Submit invoices to reception for closing."}
+        {isReceptionistOnly  && "Close pending invoices submitted by doctors."}
+        {isBoth              && "Create new invoices or close pending ones."}
       </div>
 
-      {/* Recent invoices */}
-      {invoices.length>0 && (
-        <div style={{marginTop:28}}>
-          <H size={20} style={{marginBottom:12}}>Recent Invoices</H>
+      {/* PENDING CLOSURE — visible to receptionist + admin + senior_doctor */}
+      {canCloseInvoices && (
+        <div style={{marginBottom:28}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <H size={20}>Pending Closure</H>
+            {pendingDrafts.length>0 && <span style={{background:T.amberBg,color:T.amber,fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:99}}>{pendingDrafts.length}</span>}
+          </div>
           <Card style={{padding:0,overflow:"hidden"}}>
-            {invoices.slice(0,15).map((inv,i)=>(
-              <div key={inv.id} className="row-hover" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 18px",borderBottom:i<14?`1px solid ${T.border}`:"none"}}>
+            {pendingDrafts.length===0
+              ? <div style={{padding:24,textAlign:"center",color:T.muted,fontSize:13}}>No drafts awaiting closure.</div>
+              : pendingDrafts.map((inv,i)=>{
+                  const ageMs = Date.now() - (inv.submittedAt?.getTime?.() || inv.createdAt?.getTime?.() || Date.now());
+                  const ageH  = Math.floor(ageMs/3600000);
+                  const stale = ageH >= 24;
+                  return(
+                    <div key={inv.id} className="row-hover"
+                      style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 18px",borderBottom:i<pendingDrafts.length-1?`1px solid ${T.border}`:"none",borderLeft:stale?`3px solid ${T.red}`:"3px solid transparent"}}>
+                      <div>
+                        <div style={{fontSize:13,fontWeight:600}}>
+                          #{inv.number} · {inv.patientName}
+                          {stale && <span style={{marginLeft:8,fontSize:10,padding:"1px 6px",background:T.redBg,color:T.red,borderRadius:4,fontWeight:600}}>{ageH}h pending</span>}
+                        </div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:3}}>{inv.dentistName||"—"} · {inv.items.length} item{inv.items.length!==1?"s":""}</div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:14}}>
+                        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:T.gold}}>{fmtEGP(inv.total)}</div>
+                        <Btn v="gold" sm onClick={()=>setCloseFor(inv)}>Close & Print</Btn>
+                      </div>
+                    </div>
+                  );
+                })
+            }
+          </Card>
+        </div>
+      )}
+
+      {/* CREATE INVOICE — visible to doctors + admin + senior_doctor */}
+      {canCreateInvoices && (
+        <div>
+          <H size={20} style={{marginBottom:12}}>{isBoth ? "Create New" : "Submit New Invoice"}</H>
+          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1.4fr",gap:18,alignItems:"start"}}>
+            {/* LEFT: completed appointments */}
+            <Card style={{padding:0,overflow:"hidden"}}>
+              <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontSize:13,fontWeight:600}}>Completed Appointments</div>
+                <Btn v="ghost" sm onClick={startManual}>+ Walk-in</Btn>
+              </div>
+              {completedNoInvoice.length===0
+                ? <div style={{padding:24,textAlign:"center",color:T.muted,fontSize:13}}>No completed appointments awaiting invoice.</div>
+                : completedNoInvoice.slice(0,30).map((ap,i)=>(
+                  <div key={ap.id} className="row-hover" onClick={()=>onSelectAppt(ap)}
+                    style={{padding:"12px 18px",cursor:"pointer",borderBottom:i<Math.min(completedNoInvoice.length,30)-1?`1px solid ${T.border}`:"none",borderLeft:selectedAppt?.id===ap.id?`3px solid ${T.gold}`:"3px solid transparent",background:selectedAppt?.id===ap.id?`${T.gold}06`:"transparent"}}>
+                    <div style={{fontWeight:600,fontSize:13}}>{ap.patient?.name||"—"}{ap.patient?.legacyId&&<span style={{marginLeft:6,fontSize:10,padding:"1px 5px",background:T.amberBg,color:T.amber,borderRadius:4}}>#{ap.patient.legacyId}</span>}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:3}}>{ap.service} · {fmtD(ap.dt)} · {ap.dentist}</div>
+                  </div>
+                ))
+              }
+            </Card>
+
+            {/* RIGHT: invoice builder */}
+            <Card style={{padding:isMobile?"16px 14px":"22px 24px"}}>
+              {!selectedPid ? (
+                <div style={{textAlign:"center",padding:"40px 20px",color:T.muted}}>
+                  <div style={{fontSize:32,marginBottom:8}}>📄</div>
+                  <div style={{fontSize:14}}>Pick a completed appointment from the left, or click "+ Walk-in" to start.</div>
+                </div>
+              ) : (
+                <>
+                  <H size={18} style={{marginBottom:12}}>Invoice Details</H>
+                  {!selectedAppt && (
+                    <Sel label="Patient" value={selectedPid} onChange={e=>setSelectedPid(e.target.value)} style={{marginBottom:14}}>
+                      {Object.values(patients).map(p=>(
+                        <option key={p.id} value={p.id}>{p.name} — {p.phone}{p.legacyId?` · #${p.legacyId}`:""}</option>
+                      ))}
+                    </Sel>
+                  )}
+                  {selectedAppt && (
+                    <div style={{background:T.bg,borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.muted}}>
+                      Linked to: <strong style={{color:T.text}}>{selectedAppt.patient?.name}</strong> · {fmtD(selectedAppt.dt)} · {selectedAppt.dentist}
+                    </div>
+                  )}
+
+                  <div style={{marginBottom:8}}><Lbl>Services</Lbl></div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
+                    {items.map((it,i)=>(
+                      <div key={i} style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"2fr 70px 100px 26px",gap:8,alignItems:"end"}}>
+                        <Sel value={it.serviceId||"__custom"} onChange={e=>{ if(e.target.value==="__custom"){updateLine(i,{serviceId:null});}else{onPickService(i,e.target.value);} }}>
+                          <option value="__custom">— Custom / type below —</option>
+                          {Object.entries(serviceGroups).map(([cat,list])=>(
+                            <optgroup key={cat} label={cat}>{list.map(s=><option key={s.id} value={s.id}>{s.name}{s.price>0?` · ${fmtEGP(s.price)}`:""}</option>)}</optgroup>
+                          ))}
+                        </Sel>
+                        {!it.serviceId && (
+                          <input value={it.name} onChange={e=>updateLine(i,{name:e.target.value})} placeholder="Service name" style={{gridColumn:isMobile?"1":"1 / span 1",border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,fontFamily:"Sora"}}/>
+                        )}
+                        <input type="number" min="1" value={it.quantity} onChange={e=>updateLine(i,{quantity:e.target.value})} style={{border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,fontFamily:"Sora",textAlign:"center"}}/>
+                        <input type="number" min="0" value={it.price} onChange={e=>updateLine(i,{price:e.target.value})} placeholder="Price" style={{border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,fontFamily:"Sora"}}/>
+                        <button onClick={()=>removeLine(i)} title="Remove" style={{border:"none",background:"transparent",color:T.red,fontSize:18,cursor:"pointer",padding:0}}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                  <Btn v="ghost" sm onClick={addLine} style={{marginBottom:16}}>+ Add line</Btn>
+
+                  <Inp label="Discount (EGP)" type="number" value={discount} onChange={e=>setDiscount(e.target.value)} style={{marginBottom:14}}/>
+                  <Txta label="Notes (optional)" value={notes} onChange={e=>setNotes(e.target.value)} style={{height:54,marginBottom:16}}/>
+
+                  <div style={{background:T.bg,borderRadius:10,padding:"14px 18px",marginBottom:16,fontFamily:"Sora"}}>
+                    <Row label="Subtotal" value={fmtEGP(subtotal)}/>
+                    {(Number(discount)||0)>0 && <Row label="Discount" value={`− ${fmtEGP(discount)}`} color={T.red}/>}
+                    <div style={{height:1,background:T.border,margin:"8px 0"}}/>
+                    <Row label="TOTAL" value={fmtEGP(total)} big/>
+                  </div>
+
+                  <div style={{fontSize:12,color:T.muted,marginBottom:10,padding:"10px 12px",background:T.amberBg+"33",borderRadius:8,borderLeft:`3px solid ${T.amber}`}}>
+                    💡 Payment method is set by reception when closing the invoice.
+                  </div>
+
+                  <Btn v="gold" onClick={submitDraft} disabled={saving}>{saving?<><Spinner/> Submitting…</>:"Submit to Reception"}</Btn>
+                </>
+              )}
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Recent paid invoices */}
+      {invoices.filter(i=>i.status==="paid").length>0 && (
+        <div style={{marginTop:28}}>
+          <H size={20} style={{marginBottom:12}}>Recent Paid Invoices</H>
+          <Card style={{padding:0,overflow:"hidden"}}>
+            {invoices.filter(i=>i.status==="paid").slice(0,15).map((inv,i,arr)=>(
+              <div key={inv.id} className="row-hover" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 18px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
                 <div>
                   <div style={{fontSize:13,fontWeight:600}}>#{inv.number} · {inv.patientName}</div>
-                  <div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtDT(inv.paidAt)} · {inv.paymentMethod} · {inv.items.length} item{inv.items.length!==1?"s":""}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:3}}>{inv.paidAt?fmtDT(inv.paidAt):"—"} · {inv.paymentMethod||"—"} · {inv.items.length} item{inv.items.length!==1?"s":""}</div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:14}}>
                   <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:T.gold}}>{fmtEGP(inv.total)}</div>
@@ -1349,6 +1427,79 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
           </Card>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════ CLOSE INVOICE MODAL (v3) */
+function CloseInvoiceModal({invoice, onClose, closeInvoice, toast}){
+  const[paymentMethod,setPaymentMethod]=useState("Cash");
+  const[closing,setClosing]=useState(false);
+
+  const handleClose=async(thenPrint=false)=>{
+    setClosing(true);
+    try{
+      const closed=await closeInvoice(invoice.id,paymentMethod);
+      toast(`Invoice ${closed.number} closed`);
+      if(thenPrint){
+        setTimeout(()=>printInvoice(closed,{name:closed.patientName,phone:closed.patientPhone,legacyId:closed.patientLegacyId}),200);
+      }
+      onClose();
+    }catch(e){ toast(`Error: ${e.message}`); }
+    finally{ setClosing(false); }
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <Card style={{maxWidth:480,width:"100%",padding:0}} cls="fade-up">
+        <div style={{padding:"20px 24px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <H size={20}>Close Invoice #{invoice.number}</H>
+          <button onClick={onClose} style={{border:"none",background:"transparent",fontSize:24,color:T.muted,cursor:"pointer"}}>×</button>
+        </div>
+        <div style={{padding:"22px 24px"}}>
+          <div style={{background:T.bg,borderRadius:10,padding:"14px 18px",marginBottom:18}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+              <span style={{color:T.muted,fontSize:13}}>Patient</span>
+              <span style={{fontSize:13,fontWeight:600}}>{invoice.patientName}</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+              <span style={{color:T.muted,fontSize:13}}>Dentist</span>
+              <span style={{fontSize:13}}>{invoice.dentistName||"—"}</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+              <span style={{color:T.muted,fontSize:13}}>Items</span>
+              <span style={{fontSize:13}}>{invoice.items.length}</span>
+            </div>
+            <div style={{height:1,background:T.border,margin:"10px 0"}}/>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+              <span style={{color:T.muted,fontSize:13,fontWeight:600}}>TOTAL</span>
+              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold}}>{fmtEGP(invoice.total)}</span>
+            </div>
+          </div>
+
+          <details style={{marginBottom:18}}>
+            <summary style={{cursor:"pointer",fontSize:12,color:T.muted,marginBottom:8}}>View items</summary>
+            <div style={{maxHeight:160,overflowY:"auto",border:`1px solid ${T.border}`,borderRadius:8,padding:8,marginTop:8}}>
+              {invoice.items.map((it,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"4px 0",borderBottom:i<invoice.items.length-1?`1px solid ${T.border}`:"none"}}>
+                  <span>{it.name} × {it.quantity}</span>
+                  <span style={{fontFamily:"'Cormorant Garamond',serif",fontWeight:600,color:T.gold}}>{fmtEGP(it.lineTotal)}</span>
+                </div>
+              ))}
+            </div>
+          </details>
+
+          <Sel label="Payment Method *" value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value)} style={{marginBottom:18}}>
+            {PAY_METHODS.map(m=><option key={m}>{m}</option>)}
+          </Sel>
+
+          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            <Btn v="gold" onClick={()=>handleClose(true)} disabled={closing}>{closing?<><Spinner/> Closing…</>:"Close & Print"}</Btn>
+            <Btn v="ghost" onClick={()=>handleClose(false)} disabled={closing}>Close (no print)</Btn>
+            <Btn v="ghost" onClick={onClose} disabled={closing}>Cancel</Btn>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -1655,7 +1806,7 @@ function AdminUsers({toast}){
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
             <select value={u.role} onChange={e=>onChangeRole(u,e.target.value)} style={{border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 8px",fontSize:12,fontFamily:"Sora",background:T.white}}>
-              <option value="admin">Admin</option><option value="dentist">Dentist</option><option value="receptionist">Receptionist</option>
+              <option value="admin">Admin</option><option value="senior_doctor">Senior Doctor</option><option value="dentist">Dentist</option><option value="receptionist">Receptionist</option>
             </select>
             <Btn v="ghost" sm onClick={()=>setShowResetFor(u)}>Reset PW</Btn>
             <Btn v={u.isActive?"danger":"success"} sm onClick={()=>onToggleActive(u)}>{u.isActive?"Deactivate":"Activate"}</Btn>
@@ -1688,7 +1839,7 @@ function InviteUserModal({onClose, toast, reload}){
           <Inp label="Email *" value={email} onChange={e=>setEmail(e.target.value)} placeholder="staff@lifedent.net"/>
           <Inp label="Temporary Password *" type="text" value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 6 chars"/>
           <Sel label="Role *" value={role} onChange={e=>setRole(e.target.value)}>
-            <option value="receptionist">Receptionist</option><option value="dentist">Dentist</option><option value="admin">Admin</option>
+            <option value="receptionist">Receptionist</option><option value="dentist">Dentist</option><option value="senior_doctor">Senior Doctor</option><option value="admin">Admin</option>
           </Sel>
           <div style={{fontSize:11,color:T.muted,lineHeight:1.5}}>The user can change their password after first login.</div>
           <div style={{display:"flex",gap:10,marginTop:6}}>
@@ -1875,12 +2026,12 @@ function MobileNav({page,setPage,recalls,onSignOut,role}){
     {key:"more",        icon:"···",label:"More"},
   ];
   const moreItems = [
-    {key:"Followups",icon:"🔔",label:"Follow-ups",badge:pendingR, roles:["admin","dentist","receptionist"]},
-    {key:"Billing",  icon:"₤", label:"Billing",   badge:0,        roles:["admin","dentist","receptionist"]},
-    {key:"Revenue",  icon:"▲", label:"Revenue",   badge:0,        roles:["admin"]},
-    {key:"Messages", icon:"💬",label:"Messages",  badge:0,        roles:["admin","dentist","receptionist"]},
+    {key:"Followups",icon:"🔔",label:"Follow-ups",badge:pendingR, roles:["admin","senior_doctor","dentist","receptionist"]},
+    {key:"Billing",  icon:"₤", label:"Billing",   badge:0,        roles:["admin","senior_doctor","dentist","receptionist"]},
+    {key:"Revenue",  icon:"▲", label:"Revenue",   badge:0,        roles:["admin","senior_doctor"]},
+    {key:"Messages", icon:"💬",label:"Messages",  badge:0,        roles:["admin","senior_doctor","dentist","receptionist"]},
     {key:"Admin",    icon:"⚙", label:"Admin",     badge:0,        roles:["admin"]},
-    {key:"Settings", icon:"⚙️",label:"Settings",  badge:0,        roles:["admin","dentist","receptionist"]},
+    {key:"Settings", icon:"⚙️",label:"Settings",  badge:0,        roles:["admin","senior_doctor","dentist","receptionist"]},
   ].filter(i => i.roles.includes(role));
   return(
     <>
@@ -1928,16 +2079,16 @@ function MobileNav({page,setPage,recalls,onSignOut,role}){
 
 /* ════════════════════════════════════════════════ SIDEBAR */
 const NAV=[
-  {key:"Dashboard",    icon:"◈",label:"Dashboard",   roles:["admin","dentist","receptionist"]},
-  {key:"Appointments", icon:"◷",label:"Appointments",roles:["admin","dentist","receptionist"]},
-  {key:"NewAppt",      icon:"＋",label:"New Appointment",roles:["admin","dentist","receptionist"]},
-  {key:"Patients",     icon:"◎",label:"Patients",    roles:["admin","dentist","receptionist"]},
-  {key:"Followups",    icon:"◉",label:"Follow-ups",  roles:["admin","dentist","receptionist"]},
-  {key:"Billing",      icon:"₤",label:"Billing",     roles:["admin","dentist","receptionist"]},
-  {key:"Revenue",      icon:"▲",label:"Revenue",     roles:["admin"]},
-  {key:"Messages",     icon:"✦",label:"Messages",    roles:["admin","dentist","receptionist"]},
+  {key:"Dashboard",    icon:"◈",label:"Dashboard",   roles:["admin","senior_doctor","dentist","receptionist"]},
+  {key:"Appointments", icon:"◷",label:"Appointments",roles:["admin","senior_doctor","dentist","receptionist"]},
+  {key:"NewAppt",      icon:"＋",label:"New Appointment",roles:["admin","senior_doctor","dentist","receptionist"]},
+  {key:"Patients",     icon:"◎",label:"Patients",    roles:["admin","senior_doctor"]},
+  {key:"Followups",    icon:"◉",label:"Follow-ups",  roles:["admin","senior_doctor","dentist","receptionist"]},
+  {key:"Billing",      icon:"₤",label:"Billing",     roles:["admin","senior_doctor","dentist","receptionist"]},
+  {key:"Revenue",      icon:"▲",label:"Revenue",     roles:["admin","senior_doctor"]},
+  {key:"Messages",     icon:"✦",label:"Messages",    roles:["admin","senior_doctor","dentist","receptionist"]},
   {key:"Admin",        icon:"⚙",label:"Admin Panel", roles:["admin"]},
-  {key:"Settings",     icon:"◐",label:"Settings",    roles:["admin","dentist","receptionist"]},
+  {key:"Settings",     icon:"◐",label:"Settings",    roles:["admin","senior_doctor","dentist","receptionist"]},
 ];
 const TOOTH=`url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 6 C20 6 12 13 12 22 C12 30 15 36 18 42 L21 54 C21 55.5 22.5 57 24 57 C25.5 57 27 55.5 27 54 L27 46 C27 44 28.5 42.5 30 42.5 C31.5 42.5 33 44 33 46 L33 54 C33 55.5 34.5 57 36 57 C37.5 57 39 55.5 39 54 L42 42 C45 36 48 30 48 22 C48 13 40 6 30 6Z' fill='white' fill-opacity='0.025'/%3E%3C/svg%3E")`;
 
@@ -1979,7 +2130,9 @@ function Sidebar({page,setPage,patients,appointments,recalls,messages,onSignOut,
 }
 
 /* ════════════════════════════════════════════════ ROOT */
-export default function CRM({ role="admin", canSeeClinical=true, userFullName="" }){
+export default function CRM({ role="admin", userId="", canSeeClinical=true, userFullName="",
+                              canBrowsePatients=true, canSeeRevenue=true,
+                              canCloseInvoices=true, canCreateInvoices=true }){
   const {
     patients, appointments, recalls, messages,
     dentists, categories, services, invoices,
@@ -1989,7 +2142,7 @@ export default function CRM({ role="admin", canSeeClinical=true, userFullName=""
     addDentist, patchDentist, removeDentist,
     addCategory, patchCategory, removeCategory,
     addService, patchService, removeService,
-    addInvoice,
+    addInvoice, closeInvoice,
   } = useClinicData();
 
   const[page,setPage]=useState("Dashboard");
@@ -2028,8 +2181,9 @@ export default function CRM({ role="admin", canSeeClinical=true, userFullName=""
     dentists, categories, services, invoices,
     addPatient, patchPatient, importPatients,
     addAppt, patchAppt, addRecall, patchRecall, sendWAMessage,
-    addInvoice,
-    toast:showToast, canSeeClinical, isMobile, role };
+    addInvoice, closeInvoice,
+    toast:showToast, canSeeClinical, isMobile, role, userId,
+    canBrowsePatients, canSeeRevenue, canCloseInvoices, canCreateInvoices };
 
   // Role-gate routing — if non-admin lands on admin page, bounce to Dashboard
   const safePage = (() => {
