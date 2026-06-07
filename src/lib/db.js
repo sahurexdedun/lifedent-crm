@@ -541,6 +541,14 @@ export async function adminResetPassword(userId, password) {
   if (data?.error) throw new Error(data.error);
   return data;
 }
+export async function adminDeleteUser(userId) {
+  const { data, error } = await supabase.functions.invoke("admin-create-user", {
+    body: { action: "delete", userId },
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
 
 // ── REAL-TIME ─────────────────────────────────────────────────────────────
 export function subscribeToAppointments(cb) {

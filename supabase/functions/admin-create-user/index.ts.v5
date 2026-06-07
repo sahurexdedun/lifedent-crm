@@ -1,0 +1,142 @@
+// supabase/functions/admin-create-user/index.ts
+// v5 — adds "delete" action. Caller must be an active admin (verified server-side).
+//
+// Deploy: Supabase Dashboard → Edge Functions → admin-create-user → Edit code → paste this → Deploy.
+// Make sure the SERVICE_ROLE_KEY secret is still set (Function → Secrets).
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const CORS = {
+  "Access-Control-Allow-Origin":  "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+const SUPABASE_URL              = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_ANON_KEY         = Deno.env.get("SUPABASE_ANON_KEY")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+function j(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status, headers: { ...CORS, "Content-Type": "application/json" },
+  });
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+
+  // ── 1. Verify the caller is logged in ────────────────────────────────
+  const authHeader = req.headers.get("Authorization") || "";
+  const token = authHeader.replace("Bearer ", "");
+  if (!token) return j({ error: "Missing Authorization header" }, 401);
+
+  const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const { data: { user: caller }, error: callerErr } = await userClient.auth.getUser();
+  if (callerErr || !caller) return j({ error: "Invalid session" }, 401);
+
+  // ── 2. Verify caller is an active admin ──────────────────────────────
+  const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const { data: callerProfile } = await admin.from("profiles")
+    .select("role, is_active").eq("id", caller.id).maybeSingle();
+  if (!callerProfile || callerProfile.role !== "admin" || !callerProfile.is_active) {
+    return j({ error: "Forbidden — admin only" }, 403);
+  }
+
+  // ── 3. Dispatch on action ────────────────────────────────────────────
+  let body: any = {};
+  try { body = await req.json(); } catch { return j({ error: "Invalid JSON" }, 400); }
+  const { action } = body;
+
+  try {
+    if (action === "create") {
+      const { email, password, fullName, role } = body;
+      if (!email || !password) return j({ error: "email + password required" }, 400);
+      if (!["admin","senior_doctor","dentist","receptionist"].includes(role))
+        return j({ error: "Invalid role" }, 400);
+
+      const { data: created, error: cErr } = await admin.auth.admin.createUser({
+        email, password, email_confirm: true,
+        user_metadata: { full_name: fullName || "" },
+      });
+      if (cErr) return j({ error: cErr.message }, 400);
+
+      const { error: pErr } = await admin.from("profiles").upsert({
+        id: created.user.id, email, full_name: fullName || "", role, is_active: true,
+      });
+      if (pErr) return j({ error: pErr.message }, 400);
+
+      return j({ ok: true, userId: created.user.id });
+    }
+
+    if (action === "update_role") {
+      const { userId, role } = body;
+      if (!userId || !role) return j({ error: "userId + role required" }, 400);
+      if (!["admin","senior_doctor","dentist","receptionist"].includes(role))
+        return j({ error: "Invalid role" }, 400);
+      // Prevent admin from demoting themselves (would lock everyone out if they were the last admin)
+      if (userId === caller.id && role !== "admin")
+        return j({ error: "Cannot change your own admin role here" }, 400);
+
+      const { error } = await admin.from("profiles").update({ role }).eq("id", userId);
+      if (error) return j({ error: error.message }, 400);
+      return j({ ok: true });
+    }
+
+    if (action === "set_active") {
+      const { userId, isActive } = body;
+      if (!userId) return j({ error: "userId required" }, 400);
+      if (userId === caller.id && isActive === false)
+        return j({ error: "Cannot deactivate yourself" }, 400);
+
+      const { error } = await admin.from("profiles").update({ is_active: !!isActive }).eq("id", userId);
+      if (error) return j({ error: error.message }, 400);
+      // Also revoke active sessions so a deactivated user can't keep using their token
+      if (!isActive) await admin.auth.admin.signOut(userId).catch(()=>{});
+      return j({ ok: true });
+    }
+
+    if (action === "reset_password") {
+      const { userId, password } = body;
+      if (!userId || !password) return j({ error: "userId + password required" }, 400);
+      if (password.length < 8)  return j({ error: "Password must be at least 8 chars" }, 400);
+
+      const { error } = await admin.auth.admin.updateUserById(userId, { password });
+      if (error) return j({ error: error.message }, 400);
+      return j({ ok: true });
+    }
+
+    if (action === "delete") {
+      const { userId } = body;
+      if (!userId) return j({ error: "userId required" }, 400);
+      if (userId === caller.id)
+        return j({ error: "Cannot delete yourself" }, 400);
+
+      // Safety check: refuse to delete the last active admin
+      const { data: targetProfile } = await admin.from("profiles")
+        .select("role").eq("id", userId).maybeSingle();
+      if (targetProfile?.role === "admin") {
+        const { count } = await admin.from("profiles")
+          .select("id", { count: "exact", head: true })
+          .eq("role", "admin").eq("is_active", true);
+        if ((count || 0) <= 1)
+          return j({ error: "Refusing to delete the last active admin" }, 400);
+      }
+
+      // Delete from auth.users — profiles row cascades if FK has ON DELETE CASCADE
+      const { error: dErr } = await admin.auth.admin.deleteUser(userId);
+      if (dErr) return j({ error: dErr.message }, 400);
+
+      // Best-effort cleanup if cascade isn't set up
+      await admin.from("profiles").delete().eq("id", userId).catch(()=>{});
+      return j({ ok: true });
+    }
+
+    return j({ error: `Unknown action: ${action}` }, 400);
+  } catch (e) {
+    return j({ error: e?.message || "Unknown error" }, 500);
+  }
+});

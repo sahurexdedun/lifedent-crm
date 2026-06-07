@@ -4,9 +4,10 @@ import { useClinicData } from "./hooks/useClinicData";
 import {
   signOut, findPatientByPhone,
   getProfiles, adminCreateUser, adminUpdateUserRole,
-  adminSetUserActive, adminResetPassword,
+  adminSetUserActive, adminResetPassword, adminDeleteUser,
 } from "./lib/db";
 import { L as IL, defaultIntake, mergeIntake, computePatientFlags, intakeIsStarted } from "./lib/intake";
+import { t as tr, isRTL, getStoredLang, setStoredLang } from "./lib/i18n";
 
 /* ════════════════════════════════════════════════ STYLES */
 const G = `
@@ -1223,8 +1224,8 @@ function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatie
                       <div>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                           <div style={{fontSize:11,color:T.muted}}>{IL.completedOn.en}: {sel.intakeUpdatedAt?fmtDT(sel.intakeUpdatedAt):"—"}</div>
-                          {/* Receptionist loses edit access once the form has been saved at least once */}
-                          {role!=="receptionist" && <Btn v="ghost" sm onClick={()=>setShowIntake(true)}>{IL.edit.en} / {IL.edit.ar}</Btn>}
+                          {/* Receptionist loses edit access ONLY after the form has been fully submitted (completed_at stamped) */}
+                          {(role!=="receptionist" || !sel.intakeCompletedAt) && <Btn v="ghost" sm onClick={()=>setShowIntake(true)}>{IL.edit.en} / {IL.edit.ar}</Btn>}
                         </div>
                         <IntakeFormView intake={sel.intakeForm}/>
                       </div>
@@ -1391,12 +1392,32 @@ function Messages({messages}){
 }
 
 /* ════════════════════════════════════════════════ SETTINGS */
-function Settings({toast}){
-  // WhatsApp config is stored in Edge Function secrets — just show status here
+function Settings({toast, lang="en", setLang, t}){
+  const tr_ = t || ((k)=>k);
   return(
     <div className="fade-up">
-      <H size={30} style={{marginBottom:6}}>Settings</H>
+      <H size={30} style={{marginBottom:6}}>{tr_("nav_settings")}</H>
       <div style={{color:T.muted,fontSize:14,marginBottom:26}}>Clinic configuration</div>
+
+      {/* Language card */}
+      <Card style={{padding:"22px 26px",marginBottom:18}}>
+        <H size={20} style={{marginBottom:6}}>🌐 {tr_("settings_language")}</H>
+        <div style={{fontSize:12,color:T.muted,marginBottom:14}}>{tr_("settings_language")} / Language / اللغة</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <button onClick={()=>setLang && setLang("en")}
+            style={{padding:"10px 20px",border:`2px solid ${lang==="en"?T.gold:T.border}`,background:lang==="en"?`${T.gold}10`:T.white,borderRadius:10,fontFamily:"Sora",fontSize:13,fontWeight:600,cursor:"pointer",color:lang==="en"?T.gold:T.text}}>
+            English
+          </button>
+          <button onClick={()=>setLang && setLang("ar")}
+            style={{padding:"10px 20px",border:`2px solid ${lang==="ar"?T.gold:T.border}`,background:lang==="ar"?`${T.gold}10`:T.white,borderRadius:10,fontFamily:"Sora",fontSize:13,fontWeight:600,cursor:"pointer",color:lang==="ar"?T.gold:T.text}}>
+            العربية
+          </button>
+        </div>
+        <div style={{fontSize:11,color:T.muted,marginTop:10,lineHeight:1.5}}>
+          Only the main navigation and buttons are translated. Patient names, treatments, and clinical notes stay in their original language.
+        </div>
+      </Card>
+
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18}}>
         <Card style={{padding:"24px 26px"}}>
           <H size={20} style={{marginBottom:16}}>WhatsApp Status</H>
@@ -2272,6 +2293,11 @@ function AdminUsers({toast}){
     try{ await adminSetUserActive(u.id,!u.isActive); toast(u.isActive?"User deactivated":"User activated"); reload(); }
     catch(e){ toast(`Error: ${e.message}`); }
   };
+  const [deleteFor, setDeleteFor] = useState(null);
+  const onDeleteUser=async(u)=>{
+    try{ await adminDeleteUser(u.id); toast(`${u.fullName||u.email} deleted`); setDeleteFor(null); reload(); }
+    catch(e){ toast(`Error: ${e.message}`); }
+  };
 
   return(
     <Card style={{padding:0,overflow:"hidden"}}>
@@ -2296,12 +2322,42 @@ function AdminUsers({toast}){
             </select>
             <Btn v="ghost" sm onClick={()=>setShowResetFor(u)}>Reset PW</Btn>
             <Btn v={u.isActive?"danger":"success"} sm onClick={()=>onToggleActive(u)}>{u.isActive?"Deactivate":"Activate"}</Btn>
+            <Btn v="danger" sm onClick={()=>setDeleteFor(u)} title="Permanently delete">🗑</Btn>
           </div>
         </div>
       ))}
       {showInvite && <InviteUserModal onClose={()=>setShowInvite(false)} toast={toast} reload={reload}/>}
       {showResetFor && <ResetPasswordModal user={showResetFor} onClose={()=>setShowResetFor(null)} toast={toast}/>}
+      {deleteFor && <DeleteUserModal user={deleteFor} onClose={()=>setDeleteFor(null)} onConfirm={()=>onDeleteUser(deleteFor)}/>}
     </Card>
+  );
+}
+
+function DeleteUserModal({user, onClose, onConfirm}){
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const expected = (user.fullName || user.email || "").trim();
+  const matches = typed.trim() === expected;
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <Card style={{maxWidth:440,width:"100%",padding:"22px 26px"}} cls="fade-up">
+        <div style={{textAlign:"center",fontSize:34,marginBottom:8}}>⚠️</div>
+        <H size={20} style={{textAlign:"center",marginBottom:6}}>Delete user permanently?</H>
+        <div style={{fontSize:13,color:T.text2,textAlign:"center",marginBottom:14,lineHeight:1.5}}>
+          This permanently removes <strong>{user.fullName||user.email}</strong> from the system. Their appointments, invoices, and notes stay but get unlinked from this user. <strong style={{color:T.red}}>This cannot be undone.</strong>
+        </div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:6}}>To confirm, type the user's name exactly:</div>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:8,padding:"6px 10px",background:T.bg,borderRadius:6,fontFamily:"monospace"}}>{expected}</div>
+        <input value={typed} onChange={e=>setTyped(e.target.value)} placeholder="Type name to enable Delete"
+          style={{width:"100%",border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"Sora",marginBottom:16}}/>
+        <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+          <Btn v="ghost" onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn v="danger" disabled={!matches||busy} onClick={async()=>{ setBusy(true); try{ await onConfirm(); } finally{ setBusy(false); } }}>
+            {busy?<><Spinner/> Deleting…</>:"Delete permanently"}
+          </Btn>
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -2501,26 +2557,27 @@ function AdminServices({categories, services, addCategory, patchCategory, remove
 }
 
 /* ════════════════════════════════════════════════ MOBILE NAV */
-function MobileNav({page,setPage,recalls,invoices=[],onSignOut,role}){
+function MobileNav({page,setPage,recalls,invoices=[],onSignOut,role,t}){
+  const tr_ = t || ((k)=>k);
   const[more,setMore]=useState(false);
   const pendingR=Object.values(recalls).filter(r=>r.status==="Pending").length;
   const pendingDrafts=invoices.filter(i=>i.status==="draft").length;
   const showDraftBadge=pendingDrafts>0 && ["admin","senior_doctor","receptionist"].includes(role);
   const moreBadgeTotal=pendingR + (showDraftBadge?pendingDrafts:0);
   const tabs=[
-    {key:"Dashboard",   icon:"🏠",label:"Home"},
-    {key:"Appointments",icon:"📅",label:"Today"},
-    {key:"NewAppt",     icon:null, label:"New"},
-    {key:"Patients",    icon:"👤",label:"Patients"},
-    {key:"more",        icon:"···",label:"More"},
+    {key:"Dashboard",   icon:"🏠",label:tr_("mob_home")},
+    {key:"Appointments",icon:"📅",label:tr_("mob_today")},
+    {key:"NewAppt",     icon:null, label:tr_("mob_new")},
+    {key:"Patients",    icon:"👤",label:tr_("mob_patients")},
+    {key:"more",        icon:"···",label:tr_("mob_more")},
   ];
   const moreItems = [
-    {key:"Followups",icon:"🔔",label:"Follow-ups",badge:pendingR,                       roles:["admin","senior_doctor","dentist","receptionist"]},
-    {key:"Billing",  icon:"₤", label:"Billing",   badge:showDraftBadge?pendingDrafts:0, roles:["admin","senior_doctor","dentist","receptionist"]},
-    {key:"Revenue",  icon:"▲", label:"Revenue",   badge:0,                              roles:["admin","senior_doctor"]},
-    {key:"Messages", icon:"💬",label:"Messages",  badge:0,                              roles:["admin","senior_doctor","dentist","receptionist"]},
-    {key:"Admin",    icon:"⚙", label:"Admin",     badge:0,                              roles:["admin"]},
-    {key:"Settings", icon:"⚙️",label:"Settings",  badge:0,                              roles:["admin","senior_doctor","dentist","receptionist"]},
+    {key:"Followups",icon:"🔔",label:tr_("nav_followups"),badge:pendingR,                       roles:["admin","senior_doctor","dentist","receptionist"]},
+    {key:"Billing",  icon:"₤", label:tr_("nav_billing"),  badge:showDraftBadge?pendingDrafts:0, roles:["admin","senior_doctor","dentist","receptionist"]},
+    {key:"Revenue",  icon:"▲", label:tr_("nav_revenue"),  badge:0,                              roles:["admin","senior_doctor"]},
+    {key:"Messages", icon:"💬",label:tr_("nav_messages"), badge:0,                              roles:["admin","senior_doctor","dentist","receptionist"]},
+    {key:"Admin",    icon:"⚙", label:tr_("nav_admin"),    badge:0,                              roles:["admin"]},
+    {key:"Settings", icon:"⚙️",label:tr_("nav_settings"), badge:0,                              roles:["admin","senior_doctor","dentist","receptionist"]},
   ].filter(i => i.roles.includes(role));
   return(
     <>
@@ -2581,7 +2638,13 @@ const NAV=[
 ];
 const TOOTH=`url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 6 C20 6 12 13 12 22 C12 30 15 36 18 42 L21 54 C21 55.5 22.5 57 24 57 C25.5 57 27 55.5 27 54 L27 46 C27 44 28.5 42.5 30 42.5 C31.5 42.5 33 44 33 46 L33 54 C33 55.5 34.5 57 36 57 C37.5 57 39 55.5 39 54 L42 42 C45 36 48 30 48 22 C48 13 40 6 30 6Z' fill='white' fill-opacity='0.025'/%3E%3C/svg%3E")`;
 
-function Sidebar({page,setPage,patients,appointments,recalls,messages,invoices=[],onSignOut,role}){
+function Sidebar({page,setPage,patients,appointments,recalls,messages,invoices=[],onSignOut,role,t}){
+  const tr_ = t || ((k)=>k);
+  const navLabelKey = {
+    Dashboard:"nav_dashboard", Appointments:"nav_appointments", NewAppt:"nav_newAppt",
+    Patients:"nav_patients", Followups:"nav_followups", Billing:"nav_billing",
+    Revenue:"nav_revenue", Messages:"nav_messages", Admin:"nav_admin", Settings:"nav_settings",
+  };
   const pendingR=Object.values(recalls).filter(r=>r.status==="Pending").length;
   const pendingDrafts=invoices.filter(i=>i.status==="draft").length;
   const visibleNav = NAV.filter(n => n.roles.includes(role));
@@ -2600,7 +2663,7 @@ function Sidebar({page,setPage,patients,appointments,recalls,messages,invoices=[
           return(
             <button key={n.key} onClick={()=>setPage(n.key)} className="nav-btn"
               style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"10px 12px",borderRadius:10,border:"none",cursor:"pointer",marginBottom:2,fontFamily:"Sora",fontSize:13,fontWeight:active?600:400,textAlign:"left",background:active?`${T.gold}1A`:"transparent",color:active?T.goldL:"rgba(255,255,255,0.5)",borderLeft:active?`2px solid ${T.gold}`:"2px solid transparent"}}>
-              <span style={{display:"flex",alignItems:"center",gap:9}}><span style={{fontSize:13,opacity:0.75}}>{n.icon}</span>{n.label}</span>
+              <span style={{display:"flex",alignItems:"center",gap:9}}><span style={{fontSize:13,opacity:0.75}}>{n.icon}</span>{tr_(navLabelKey[n.key]||n.key) || n.label}</span>
               {badge&&<span style={{background:T.red,color:"#fff",fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:99}}>{badge}</span>}
             </button>
           );
@@ -2608,13 +2671,13 @@ function Sidebar({page,setPage,patients,appointments,recalls,messages,invoices=[
       </nav>
       <div style={{padding:"12px 18px 20px",borderTop:"1px solid rgba(255,255,255,0.06)"}}>
         <div style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.22)",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:10}}>Overview</div>
-        {[["Patients",Object.keys(patients).length],["Appointments",Object.keys(appointments).length],["Messages",messages.length]].map(([l,v])=>(
+        {[[tr_("nav_patients"),Object.keys(patients).length],[tr_("nav_appointments"),Object.keys(appointments).length],[tr_("nav_messages"),messages.length]].map(([l,v])=>(
           <div key={l} style={{display:"flex",justifyContent:"space-between",marginBottom:7,fontSize:12,color:"rgba(255,255,255,0.4)"}}>
             <span>{l}</span><span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:15,fontWeight:600,color:T.goldL}}>{v}</span>
           </div>
         ))}
         <button onClick={onSignOut} style={{marginTop:12,width:"100%",padding:"8px 12px",background:"rgba(255,255,255,0.05)",border:"none",borderRadius:8,cursor:"pointer",fontSize:12,color:"rgba(255,255,255,0.4)",fontFamily:"Sora",display:"flex",alignItems:"center",gap:8}}>
-          🚪 <span>Sign Out</span>
+          🚪 <span>{tr_("signOut")}</span>
         </button>
       </div>
     </aside>
@@ -2640,6 +2703,11 @@ export default function CRM({ role="admin", userId="", canSeeClinical=true, user
   const[page,setPage]=useState("Dashboard");
   const[toast,setToast]=useState("");
   const isMobile=useMobile();
+  const[lang,setLangState]=useState(()=>getStoredLang());
+  const setLang=useCallback((l)=>{ setStoredLang(l); setLangState(l); document.documentElement.dir = isRTL(l)?"rtl":"ltr"; },[]);
+  // Apply dir on first render so SSR-style hydration matches
+  useEffect(()=>{ document.documentElement.dir = isRTL(lang)?"rtl":"ltr"; },[lang]);
+  const t = useCallback((k)=>tr(k,lang),[lang]);
   const showToast=useCallback(msg=>{setToast(msg);setTimeout(()=>setToast(""),3500);},[]);
 
   const handleSignOut=async()=>{
@@ -2675,7 +2743,8 @@ export default function CRM({ role="admin", userId="", canSeeClinical=true, user
     addAppt, patchAppt, addRecall, patchRecall, sendWAMessage,
     addInvoice, closeInvoice,
     toast:showToast, canSeeClinical, isMobile, role, userId,
-    canBrowsePatients, canSeeRevenue, canCloseInvoices, canCreateInvoices };
+    canBrowsePatients, canSeeRevenue, canCloseInvoices, canCreateInvoices,
+    t, lang, setLang };
 
   // Role-gate routing — if non-admin lands on admin page, bounce to Dashboard
   const safePage = (() => {
@@ -2689,7 +2758,7 @@ export default function CRM({ role="admin", userId="", canSeeClinical=true, user
     <>
       <style>{G}</style>
       <div style={{display:"flex",height:"100vh",fontFamily:"'Sora',sans-serif",overflow:"hidden"}}>
-        {!isMobile&&<Sidebar page={safePage} setPage={setPage} patients={patients} appointments={appointments} recalls={recalls} messages={messages} invoices={invoices} onSignOut={handleSignOut} role={role}/>}
+        {!isMobile&&<Sidebar page={safePage} setPage={setPage} patients={patients} appointments={appointments} recalls={recalls} messages={messages} invoices={invoices} onSignOut={handleSignOut} role={role} t={t}/>}
         <main style={{flex:"1 1 0",minWidth:0,width:0,overflowY:"auto",overflowX:"hidden",padding:isMobile?"20px 16px 100px":"34px 38px",background:T.bg}}>
           {safePage==="Dashboard"    && <Dashboard    {...sharedProps} userFullName={userFullName}/>}
           {safePage==="Appointments" && <Appointments {...sharedProps}/>}
@@ -2703,10 +2772,10 @@ export default function CRM({ role="admin", userId="", canSeeClinical=true, user
                                           addDentist={addDentist} patchDentist={patchDentist} removeDentist={removeDentist}
                                           addCategory={addCategory} patchCategory={patchCategory} removeCategory={removeCategory}
                                           addService={addService} patchService={patchService} removeService={removeService}/>}
-          {safePage==="Settings"     && <Settings     toast={showToast}/>}
+          {safePage==="Settings"     && <Settings     toast={showToast} lang={lang} setLang={setLang} t={t}/>}
         </main>
       </div>
-      {isMobile&&<MobileNav page={safePage} setPage={setPage} recalls={recalls} invoices={invoices} onSignOut={handleSignOut} role={role}/>}
+      {isMobile&&<MobileNav page={safePage} setPage={setPage} recalls={recalls} invoices={invoices} onSignOut={handleSignOut} role={role} t={t}/>}
       <Toast msg={toast} onClose={()=>setToast("")}/>
     </>
   );
