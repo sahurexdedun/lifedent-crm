@@ -57,8 +57,15 @@ const uid   = () => Math.random().toString(36).slice(2,9);
 const now   = () => new Date();
 const addH  = (d,h) => new Date(+d+h*3600000);
 const addD  = (d,n) => new Date(+d+n*86400000);
-const fmtD  = d => d.toLocaleDateString("en-GB",{weekday:"short",day:"2-digit",month:"short"});
-const fmtT  = d => d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+
+// Module-level lang reference so date/time helpers can render Arabic without
+// having to thread `lang` through every call site.
+let __CURRENT_LANG = "en";
+export function setI18nLang(l){ __CURRENT_LANG = l; }
+const localeOf = () => __CURRENT_LANG === "ar" ? "ar-EG" : "en-GB";
+
+const fmtD  = d => d.toLocaleDateString(localeOf(),{weekday:"short",day:"2-digit",month:"short"});
+const fmtT  = d => d.toLocaleTimeString(localeOf(),{hour:"2-digit",minute:"2-digit"});
 const fmtDT = d => `${fmtD(d)}, ${fmtT(d)}`;
 const isoD  = d => d.toISOString().slice(0,10);
 const pDate = s => { const d=new Date(s); d.setHours(0,0,0,0); return d; };
@@ -210,7 +217,9 @@ function Btn({children,v="gold",sm,onClick,disabled,style={}}){
 }
 
 function Tabs({opts,val,onChange,style={}}){
-  return <div style={{display:"inline-flex",background:"rgba(0,0,0,0.06)",borderRadius:12,padding:3,gap:2,...style}}>{opts.map(o=>{const a=o===val;return <button key={o} onClick={()=>onChange(o)} style={{border:"none",borderRadius:9,padding:"8px 18px",fontSize:13,fontWeight:a?600:400,cursor:"pointer",fontFamily:"Sora",transition:"all 0.15s",background:a?T.white:"transparent",color:a?T.text:T.muted,boxShadow:a?"0 1px 5px rgba(0,0,0,0.09)":"none"}}>{o}</button>;})}</div>;
+  // Normalize: opts can be string[] or {value,label}[]
+  const norm = (opts||[]).map(o => typeof o === "string" ? {value:o,label:o} : o);
+  return <div style={{display:"inline-flex",background:"rgba(0,0,0,0.06)",borderRadius:12,padding:3,gap:2,...style}}>{norm.map(o=>{const a=o.value===val;return <button key={o.value} onClick={()=>onChange(o.value)} style={{border:"none",borderRadius:9,padding:"8px 18px",fontSize:13,fontWeight:a?600:400,cursor:"pointer",fontFamily:"Sora",transition:"all 0.15s",background:a?T.white:"transparent",color:a?T.text:T.muted,boxShadow:a?"0 1px 5px rgba(0,0,0,0.09)":"none"}}>{o.label}</button>;})}</div>;
 }
 
 function Div({style={}}){ return <div style={{height:1,background:T.border,...style}}/>; }
@@ -278,7 +287,7 @@ function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userI
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:isMobile?20:32,flexWrap:"wrap",gap:12}}>
         <div>
           <H size={isMobile?28:44} italic style={{lineHeight:1.05}}>{tr_(greetKey)},<br/>{userFullName||"LifeDent"}.</H>
-          <div style={{marginTop:8,color:T.muted,fontSize:13}}>{new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div>
+          <div style={{marginTop:8,color:T.muted,fontSize:13}}>{new Date().toLocaleDateString(localeOf(),{weekday:"long",day:"numeric",month:"long"})}</div>
         </div>
         {!isMobile&&<Card style={{padding:"18px 24px",textAlign:"right"}}>
           <div style={{fontSize:10,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:"0.08em"}}>{tr_("dash_today_stat")}</div>
@@ -1318,11 +1327,15 @@ function Followups({patients,recalls,patchRecall,sendWAMessage,toast,isMobile,t}
   return(
     <div className="fade-up">
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24,flexWrap:"wrap",gap:12}}>
-        <H size={30}>{tr_("nav_followups")}</H>
-        <Tabs opts={["Due Soon","Pending","All"]} val={filter} onChange={setFilter}/>
+        <H size={30}>{tr_("fu_title")}</H>
+        <Tabs opts={[
+          ["Due Soon",tr_("fu_dueSoon")],
+          ["Pending", tr_("fu_pending")],
+          ["All",     tr_("fu_filter_all")]
+        ].map(([v,l])=>({value:v,label:l}))} val={filter} onChange={setFilter}/>
       </div>
       {rows.length===0
-        ?<Card style={{padding:52,textAlign:"center"}}><div style={{fontSize:36,marginBottom:14}}>🔔</div><H size={22} style={{color:T.muted}}>No recalls in this filter</H></Card>
+        ?<Card style={{padding:52,textAlign:"center"}}><div style={{fontSize:36,marginBottom:14}}>🔔</div><H size={22} style={{color:T.muted}}>{tr_("fu_none")}</H></Card>
         :<div style={{display:"flex",flexDirection:"column",gap:10}}>
           {rows.map(r=>{
             const p=r.patient||patients[r.patientId];
@@ -1339,9 +1352,9 @@ function Followups({patients,recalls,patchRecall,sendWAMessage,toast,isMobile,t}
                       <div style={{fontWeight:600,fontSize:15}}>{p?.name||"Unknown"}</div>
                       <div style={{fontSize:13,color:T.muted,margin:"2px 0"}}>{r.type}</div>
                       <div style={{display:"flex",gap:12,alignItems:"center",marginTop:4,flexWrap:"wrap"}}>
-                        <div style={{fontSize:12,color:T.muted}}>Due: {fmtD(pDate(r.dueDate))}</div>
-                        <div style={{fontSize:12,fontWeight:700,color:ac,background:abg,padding:"2px 10px",borderRadius:99}}>{urgent?`${Math.abs(days)}d overdue`:days===0?"Today":`${days}d`}</div>
-                        {r.lastSent&&<div style={{fontSize:11,color:T.muted}}>Sent: {fmtD(r.lastSent)}</div>}
+                        <div style={{fontSize:12,color:T.muted}}>{tr_("fu_due")}: {fmtD(pDate(r.dueDate))}</div>
+                        <div style={{fontSize:12,fontWeight:700,color:ac,background:abg,padding:"2px 10px",borderRadius:99}}>{urgent?`${Math.abs(days)} ${tr_("fu_days")} ${tr_("fu_overdue")}`:days===0?tr_("st_today"):`${days} ${tr_("fu_days")}`}</div>
+                        {r.lastSent&&<div style={{fontSize:11,color:T.muted}}>{tr_("fu_sent")}: {fmtD(r.lastSent)}</div>}
                       </div>
                     </div>
                   </div>
@@ -1350,7 +1363,7 @@ function Followups({patients,recalls,patchRecall,sendWAMessage,toast,isMobile,t}
                       <div style={{fontSize:12,color:T.muted}}>📞 {p?.phone}</div>
                       <div style={{fontSize:11,color:T.muted,marginTop:2}}>→ {toWA(p?.phone||"")}</div>
                     </div>
-                    <Btn v="wa" sm onClick={()=>send(r)}>💬 Send</Btn>
+                    <Btn v="wa" sm onClick={()=>send(r)}>💬 {tr_("fu_sendReminder")}</Btn>
                     {r.status==="Pending"&&<Btn v="success" sm disabled={saving===r.id} onClick={()=>markDone(r.id)}>✓ Done</Btn>}
                   </div>
                 </div>
@@ -1686,7 +1699,8 @@ function AddOldPatientModal({onClose, addPatient, toast, onAdded}){
 
 /* ════════════════════════════════════════════════ BILLING (v3) — draft / close workflow */
 function Billing({patients,appointments,services,categories,invoices,addInvoice,closeInvoice,
-                  toast,isMobile,role,userId,canCloseInvoices,canCreateInvoices}){
+                  toast,isMobile,role,userId,canCloseInvoices,canCreateInvoices,t}){
+  const tr_ = t || ((k)=>k);
   const[selectedAppt,setSelectedAppt]=useState(null);
   const[selectedPid,setSelectedPid]=useState("");
   const[items,setItems]=useState([]); // [{serviceId,name,category,price,quantity}]
@@ -1778,16 +1792,16 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
     const p=patients[selectedPid]||{name:savedDraft.patientName,phone:savedDraft.patientPhone};
     return(
       <div className="fade-up">
-        <H size={30} style={{marginBottom:24}}>Draft Submitted</H>
+        <H size={30} style={{marginBottom:24}}>{tr_("bi_draftSubmitted")}</H>
         <Card style={{padding:24,maxWidth:520}}>
           <div style={{textAlign:"center",marginBottom:18}}>
             <div style={{fontSize:36,marginBottom:8}}>📤</div>
-            <H size={22}>Draft #{savedDraft.number}</H>
+            <H size={22}>{tr_("bi_draftHash")}{savedDraft.number}</H>
             <div style={{color:T.muted,fontSize:13,marginTop:6}}>{p.name} · {fmtEGP(savedDraft.total)}</div>
-            <div style={{color:T.amber,fontSize:12,marginTop:8,fontWeight:600}}>Waiting for reception to close.</div>
+            <div style={{color:T.amber,fontSize:12,marginTop:8,fontWeight:600}}>{tr_("bi_waitingClose")}</div>
           </div>
           <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-            <Btn v="gold" onClick={()=>{setSavedDraft(null);setSelectedAppt(null);setSelectedPid("");setItems([]);}}>+ New Draft</Btn>
+            <Btn v="gold" onClick={()=>{setSavedDraft(null);setSelectedAppt(null);setSelectedPid("");setItems([]);}}>{tr_("bi_newDraft")}</Btn>
           </div>
         </Card>
       </div>
@@ -1796,25 +1810,25 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
 
   return(
     <div className="fade-up">
-      {closeFor && <CloseInvoiceModal invoice={closeFor} onClose={()=>setCloseFor(null)} closeInvoice={closeInvoice} toast={toast}/>}
+      {closeFor && <CloseInvoiceModal invoice={closeFor} onClose={()=>setCloseFor(null)} closeInvoice={closeInvoice} toast={toast} t={t}/>}
 
-      <H size={30} style={{marginBottom:8}}>Billing</H>
+      <H size={30} style={{marginBottom:8}}>{tr_("bi_title")}</H>
       <div style={{color:T.muted,fontSize:13,marginBottom:20}}>
-        {isDoctorOnly        && "Submit invoices to reception for closing."}
-        {isReceptionistOnly  && "Close pending invoices submitted by doctors."}
-        {isBoth              && "Create new invoices or close pending ones."}
+        {isDoctorOnly        && tr_("bi_hSubtitle_doctor")}
+        {isReceptionistOnly  && tr_("bi_hSubtitle_reception")}
+        {isBoth              && tr_("bi_hSubtitle_both")}
       </div>
 
       {/* PENDING CLOSURE — visible to receptionist + admin + senior_doctor */}
       {canCloseInvoices && (
         <div style={{marginBottom:28}}>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-            <H size={20}>Pending Closure</H>
+            <H size={20}>{tr_("bi_pendingClose")}</H>
             {pendingDrafts.length>0 && <span style={{background:T.amberBg,color:T.amber,fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:99}}>{pendingDrafts.length}</span>}
           </div>
           <Card style={{padding:0,overflow:"hidden"}}>
             {pendingDrafts.length===0
-              ? <div style={{padding:24,textAlign:"center",color:T.muted,fontSize:13}}>No drafts awaiting closure.</div>
+              ? <div style={{padding:24,textAlign:"center",color:T.muted,fontSize:13}}>{tr_("bi_noPending")}</div>
               : pendingDrafts.map((inv,i)=>{
                   const ageMs = Date.now() - (inv.submittedAt?.getTime?.() || inv.createdAt?.getTime?.() || Date.now());
                   const ageH  = Math.floor(ageMs/3600000);
@@ -1825,13 +1839,13 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
                       <div>
                         <div style={{fontSize:13,fontWeight:600}}>
                           #{inv.number} · {inv.patientName}
-                          {stale && <span style={{marginLeft:8,fontSize:10,padding:"1px 6px",background:T.redBg,color:T.red,borderRadius:4,fontWeight:600}}>{ageH}h pending</span>}
+                          {stale && <span style={{marginLeft:8,fontSize:10,padding:"1px 6px",background:T.redBg,color:T.red,borderRadius:4,fontWeight:600}}>{ageH}{tr_("bi_pendingHours")}</span>}
                         </div>
                         <div style={{fontSize:11,color:T.muted,marginTop:3}}>{inv.dentistName||"—"} · {inv.items.length} item{inv.items.length!==1?"s":""}</div>
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:14}}>
                         <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:T.gold}}>{fmtEGP(inv.total)}</div>
-                        <Btn v="gold" sm onClick={()=>setCloseFor(inv)}>Close & Print</Btn>
+                        <Btn v="gold" sm onClick={()=>setCloseFor(inv)}>{tr_("bi_closeAndPrint")}</Btn>
                       </div>
                     </div>
                   );
@@ -1844,16 +1858,16 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
       {/* CREATE INVOICE — visible to doctors + admin + senior_doctor */}
       {canCreateInvoices && (
         <div>
-          <H size={20} style={{marginBottom:12}}>{isBoth ? "Create New" : "Submit New Invoice"}</H>
+          <H size={20} style={{marginBottom:12}}>{isBoth ? tr_("bi_createNew") : tr_("bi_submitNew")}</H>
           <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1.4fr",gap:18,alignItems:"start"}}>
             {/* LEFT: completed appointments */}
             <Card style={{padding:0,overflow:"hidden"}}>
               <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div style={{fontSize:13,fontWeight:600}}>Completed Appointments</div>
-                <Btn v="ghost" sm onClick={startManual}>+ Walk-in</Btn>
+                <div style={{fontSize:13,fontWeight:600}}>{tr_("bi_completedAppts")}</div>
+                <Btn v="ghost" sm onClick={startManual}>{tr_("bi_walkIn")}</Btn>
               </div>
               {completedNoInvoice.length===0
-                ? <div style={{padding:24,textAlign:"center",color:T.muted,fontSize:13}}>No completed appointments awaiting invoice.</div>
+                ? <div style={{padding:24,textAlign:"center",color:T.muted,fontSize:13}}>{tr_("bi_noCompleted")}</div>
                 : completedNoInvoice.slice(0,30).map((ap,i)=>(
                   <div key={ap.id} className="row-hover" onClick={()=>onSelectAppt(ap)}
                     style={{padding:"12px 18px",cursor:"pointer",borderBottom:i<Math.min(completedNoInvoice.length,30)-1?`1px solid ${T.border}`:"none",borderLeft:selectedAppt?.id===ap.id?`3px solid ${T.gold}`:"3px solid transparent",background:selectedAppt?.id===ap.id?`${T.gold}06`:"transparent"}}>
@@ -1869,11 +1883,11 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
               {!selectedPid ? (
                 <div style={{textAlign:"center",padding:"40px 20px",color:T.muted}}>
                   <div style={{fontSize:32,marginBottom:8}}>📄</div>
-                  <div style={{fontSize:14}}>Pick a completed appointment from the left, or click "+ Walk-in" to start.</div>
+                  <div style={{fontSize:14}}>{tr_("bi_pickAppt")}</div>
                 </div>
               ) : (
                 <>
-                  <H size={18} style={{marginBottom:12}}>Invoice Details</H>
+                  <H size={18} style={{marginBottom:12}}>{tr_("bi_invoiceDetails")}</H>
                   {!selectedAppt && (
                     <Sel label="Patient" value={selectedPid} onChange={e=>setSelectedPid(e.target.value)} style={{marginBottom:14}}>
                       {Object.values(patients).map(p=>(
@@ -1906,23 +1920,23 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
                       </div>
                     ))}
                   </div>
-                  <Btn v="ghost" sm onClick={addLine} style={{marginBottom:16}}>+ Add line</Btn>
+                  <Btn v="ghost" sm onClick={addLine} style={{marginBottom:16}}>{tr_("bi_addLine")}</Btn>
 
-                  <Inp label="Discount (EGP)" type="number" value={discount} onChange={e=>setDiscount(e.target.value)} style={{marginBottom:14}}/>
-                  <Txta label="Notes (optional)" value={notes} onChange={e=>setNotes(e.target.value)} style={{height:54,marginBottom:16}}/>
+                  <Inp label={tr_("bi_discount")} type="number" value={discount} onChange={e=>setDiscount(e.target.value)} style={{marginBottom:14}}/>
+                  <Txta label={tr_("bi_notesOpt")} value={notes} onChange={e=>setNotes(e.target.value)} style={{height:54,marginBottom:16}}/>
 
                   <div style={{background:T.bg,borderRadius:10,padding:"14px 18px",marginBottom:16,fontFamily:"Sora"}}>
-                    <Row label="Subtotal" value={fmtEGP(subtotal)}/>
-                    {(Number(discount)||0)>0 && <Row label="Discount" value={`− ${fmtEGP(discount)}`} color={T.red}/>}
+                    <Row label={tr_("bi_subtotal")} value={fmtEGP(subtotal)}/>
+                    {(Number(discount)||0)>0 && <Row label={tr_("bi_discount")} value={`− ${fmtEGP(discount)}`} color={T.red}/>}
                     <div style={{height:1,background:T.border,margin:"8px 0"}}/>
-                    <Row label="TOTAL" value={fmtEGP(total)} big/>
+                    <Row label={tr_("bi_total")} value={fmtEGP(total)} big/>
                   </div>
 
                   <div style={{fontSize:12,color:T.muted,marginBottom:10,padding:"10px 12px",background:T.amberBg+"33",borderRadius:8,borderLeft:`3px solid ${T.amber}`}}>
-                    💡 Payment method is set by reception when closing the invoice.
+                    {tr_("bi_pmNote")}
                   </div>
 
-                  <Btn v="gold" onClick={submitDraft} disabled={saving}>{saving?<><Spinner/> Submitting…</>:"Submit to Reception"}</Btn>
+                  <Btn v="gold" onClick={submitDraft} disabled={saving}>{saving?<><Spinner/> {tr_("bi_submitting")}</>:tr_("bi_submitToReception")}</Btn>
                 </>
               )}
             </Card>
@@ -1933,7 +1947,7 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
       {/* Recent paid invoices */}
       {invoices.filter(i=>i.status==="paid").length>0 && (
         <div style={{marginTop:28}}>
-          <H size={20} style={{marginBottom:12}}>Recent Paid Invoices</H>
+          <H size={20} style={{marginBottom:12}}>{tr_("bi_recentPaid")}</H>
           <Card style={{padding:0,overflow:"hidden"}}>
             {invoices.filter(i=>i.status==="paid").slice(0,15).map((inv,i,arr)=>(
               <div key={inv.id} className="row-hover" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 18px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
@@ -1955,7 +1969,8 @@ function Billing({patients,appointments,services,categories,invoices,addInvoice,
 }
 
 /* ════════════════════════════════════════════════ CLOSE INVOICE MODAL (v3) */
-function CloseInvoiceModal({invoice, onClose, closeInvoice, toast}){
+function CloseInvoiceModal({invoice, onClose, closeInvoice, toast, t}){
+  const tr_ = t || ((k)=>k);
   const[paymentMethod,setPaymentMethod]=useState("Cash");
   const[closing,setClosing]=useState(false);
 
@@ -1976,32 +1991,32 @@ function CloseInvoiceModal({invoice, onClose, closeInvoice, toast}){
     <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
       <Card style={{maxWidth:480,width:"100%",padding:0}} cls="fade-up">
         <div style={{padding:"20px 24px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <H size={20}>Close Invoice #{invoice.number}</H>
+          <H size={20}>{tr_("bi_closeInvoice")} #{invoice.number}</H>
           <button onClick={onClose} style={{border:"none",background:"transparent",fontSize:24,color:T.muted,cursor:"pointer"}}>×</button>
         </div>
         <div style={{padding:"22px 24px"}}>
           <div style={{background:T.bg,borderRadius:10,padding:"14px 18px",marginBottom:18}}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-              <span style={{color:T.muted,fontSize:13}}>Patient</span>
+              <span style={{color:T.muted,fontSize:13}}>{tr_("na_patient")}</span>
               <span style={{fontSize:13,fontWeight:600}}>{invoice.patientName}</span>
             </div>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-              <span style={{color:T.muted,fontSize:13}}>Dentist</span>
+              <span style={{color:T.muted,fontSize:13}}>{tr_("na_dentist")}</span>
               <span style={{fontSize:13}}>{invoice.dentistName||"—"}</span>
             </div>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-              <span style={{color:T.muted,fontSize:13}}>Items</span>
+              <span style={{color:T.muted,fontSize:13}}>{tr_("bi_services")}</span>
               <span style={{fontSize:13}}>{invoice.items.length}</span>
             </div>
             <div style={{height:1,background:T.border,margin:"10px 0"}}/>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
-              <span style={{color:T.muted,fontSize:13,fontWeight:600}}>TOTAL</span>
+              <span style={{color:T.muted,fontSize:13,fontWeight:600}}>{tr_("bi_total")}</span>
               <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.gold}}>{fmtEGP(invoice.total)}</span>
             </div>
           </div>
 
           <details style={{marginBottom:18}}>
-            <summary style={{cursor:"pointer",fontSize:12,color:T.muted,marginBottom:8}}>View items</summary>
+            <summary style={{cursor:"pointer",fontSize:12,color:T.muted,marginBottom:8}}>{tr_("bi_viewItems")}</summary>
             <div style={{maxHeight:160,overflowY:"auto",border:`1px solid ${T.border}`,borderRadius:8,padding:8,marginTop:8}}>
               {invoice.items.map((it,i)=>(
                 <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"4px 0",borderBottom:i<invoice.items.length-1?`1px solid ${T.border}`:"none"}}>
@@ -2012,14 +2027,14 @@ function CloseInvoiceModal({invoice, onClose, closeInvoice, toast}){
             </div>
           </details>
 
-          <Sel label="Payment Method *" value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value)} style={{marginBottom:18}}>
+          <Sel label={`${tr_("bi_payMethod")} *`} value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value)} style={{marginBottom:18}}>
             {PAY_METHODS.map(m=><option key={m}>{m}</option>)}
           </Sel>
 
           <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-            <Btn v="gold" onClick={()=>handleClose(true)} disabled={closing}>{closing?<><Spinner/> Closing…</>:"Close & Print"}</Btn>
-            <Btn v="ghost" onClick={()=>handleClose(false)} disabled={closing}>Close (no print)</Btn>
-            <Btn v="ghost" onClick={onClose} disabled={closing}>Cancel</Btn>
+            <Btn v="gold" onClick={()=>handleClose(true)} disabled={closing}>{closing?<><Spinner/> {tr_("bi_closing")}</>:tr_("bi_closeAndPrint")}</Btn>
+            <Btn v="ghost" onClick={()=>handleClose(false)} disabled={closing}>{tr_("bi_closeNoPrint")}</Btn>
+            <Btn v="ghost" onClick={onClose} disabled={closing}>{tr_("cancel")}</Btn>
           </div>
         </div>
       </Card>
@@ -2732,9 +2747,9 @@ export default function CRM({ role="admin", userId="", canSeeClinical=true, user
   const[toast,setToast]=useState("");
   const isMobile=useMobile();
   const[lang,setLangState]=useState(()=>getStoredLang());
-  const setLang=useCallback((l)=>{ setStoredLang(l); setLangState(l); document.documentElement.dir = isRTL(l)?"rtl":"ltr"; },[]);
-  // Apply dir on first render so SSR-style hydration matches
-  useEffect(()=>{ document.documentElement.dir = isRTL(lang)?"rtl":"ltr"; },[lang]);
+  const setLang=useCallback((l)=>{ setStoredLang(l); setLangState(l); setI18nLang(l); document.documentElement.dir = isRTL(l)?"rtl":"ltr"; },[]);
+  // Apply dir + helper lang on first render so SSR-style hydration matches
+  useEffect(()=>{ setI18nLang(lang); document.documentElement.dir = isRTL(lang)?"rtl":"ltr"; },[lang]);
   const t = useCallback((k)=>tr(k,lang),[lang]);
   const showToast=useCallback(msg=>{setToast(msg);setTimeout(()=>setToast(""),3500);},[]);
 
