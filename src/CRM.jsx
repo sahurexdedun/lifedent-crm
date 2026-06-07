@@ -173,9 +173,18 @@ function Av({name="?",size=38}){
   return <div style={{width:size,height:size,borderRadius:"50%",flexShrink:0,background:`linear-gradient(135deg,${bg},${fg})`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:600,fontSize:size*0.38,fontFamily:"Sora",boxShadow:`0 2px 8px ${bg}55`}}>{name[0]?.toUpperCase()}</div>;
 }
 
-function Sbadge({status}){
+function Sbadge({status, t}){
   const c=ST_CFG[status]||{color:T.muted,bg:"#F0EFED"};
-  return <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 11px",background:c.bg,color:c.color,borderRadius:99,fontSize:11.5,fontWeight:600,letterSpacing:"0.02em"}}><span style={{width:6,height:6,borderRadius:"50%",background:c.color,display:"inline-block"}}/>{status}</span>;
+  const tr_ = t || ((k)=>k);
+  // Map raw English status (the DB value) to a translation key
+  const stKey = {
+    Scheduled:"st_scheduled", Confirmed:"st_confirmed", Arrived:"st_confirmed",
+    Completed:"st_completed", Cancelled:"st_cancelled", "No-show":"st_noShow",
+    Pending:"st_pending", Sent:"st_sent", Resolved:"st_resolved",
+    paid:"st_paid", draft:"st_draft",
+  }[status];
+  const label = stKey ? tr_(stKey) : status;
+  return <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 11px",background:c.bg,color:c.color,borderRadius:99,fontSize:11.5,fontWeight:600,letterSpacing:"0.02em"}}><span style={{width:6,height:6,borderRadius:"50%",background:c.color,display:"inline-block"}}/>{label}</span>;
 }
 
 function Card({children,style={},cls=""}){ return <div className={cls} style={{background:T.white,borderRadius:18,border:`1px solid ${T.border}`,boxShadow:"0 1px 3px rgba(0,0,0,0.05),0 8px 32px rgba(0,0,0,0.04)",...style}}>{children}</div>; }
@@ -241,7 +250,10 @@ function AutoRecallModal({appointment, patient, onConfirm, onDismiss}){
 }
 
 /* ════════════════════════════════════════════════ DASHBOARD */
-function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userId,role,isMobile}){
+function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userId,role,isMobile,t}){
+  const tr_ = t || ((k)=>k);
+  const hour = new Date().getHours();
+  const greetKey = hour<12 ? "greet_morning" : hour<17 ? "greet_afternoon" : "greet_evening";
   const pList=Object.values(patients);
   const apList=Object.values(appointments);
   const todayD=today();
@@ -265,13 +277,13 @@ function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userI
     <div className="fade-up">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:isMobile?20:32,flexWrap:"wrap",gap:12}}>
         <div>
-          <H size={isMobile?28:44} italic style={{lineHeight:1.05}}>Good morning,<br/>{userFullName||"LifeDent"}.</H>
+          <H size={isMobile?28:44} italic style={{lineHeight:1.05}}>{tr_(greetKey)},<br/>{userFullName||"LifeDent"}.</H>
           <div style={{marginTop:8,color:T.muted,fontSize:13}}>{new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div>
         </div>
         {!isMobile&&<Card style={{padding:"18px 24px",textAlign:"right"}}>
-          <div style={{fontSize:10,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:"0.08em"}}>Today</div>
+          <div style={{fontSize:10,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:"0.08em"}}>{tr_("dash_today_stat")}</div>
           <H size={48} style={{color:T.gold,marginTop:4,lineHeight:1}}>{todayAps.length}</H>
-          <div style={{fontSize:13,color:T.text2}}>appointment{todayAps.length!==1?"s":""}</div>
+          <div style={{fontSize:13,color:T.text2}}>{tr_("dash_appointments_lc")}</div>
         </Card>}
       </div>
 
@@ -280,10 +292,10 @@ function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userI
           <div style={{fontSize:22}}>⏰</div>
           <div style={{flex:1,minWidth:200}}>
             <div style={{fontSize:13,fontWeight:700,color:T.red}}>
-              {myStaleDrafts.length} invoice{myStaleDrafts.length!==1?"s":""} awaiting reception closure
+              {myStaleDrafts.length} {tr_("dash_invoices_pending")}
             </div>
             <div style={{fontSize:11,color:T.text2,marginTop:2}}>
-              Oldest submitted {oldestStaleH}h ago. Check with reception so patients aren't waiting.
+              {tr_("dash_oldest_submitted")} {oldestStaleH}{tr_("dash_h_ago")}. {tr_("dash_check_with_reception")}
             </div>
           </div>
         </Card>
@@ -291,10 +303,10 @@ function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userI
 
       <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:isMobile?10:14,marginBottom:isMobile?20:24}}>
         {[
-    {label:"Patients",       val:pList.length,    icon:"👤",accent:T.blueBg},
-    {label:"Today",          val:todayAps.length, icon:"📅",accent:T.amberBg},
-    {label:"Pending Recalls",val:pendingR.length, icon:"🔔",accent:T.redBg},
-    {label:"Completed",      val:apList.filter(a=>a.status==="Completed").length,icon:"✅",accent:T.greenBg},
+    {label:tr_("dash_patients_stat"),    val:pList.length,    icon:"👤",accent:T.blueBg},
+    {label:tr_("dash_today_stat"),       val:todayAps.length, icon:"📅",accent:T.amberBg},
+    {label:tr_("dash_pending_recalls"),  val:pendingR.length, icon:"🔔",accent:T.redBg},
+    {label:tr_("dash_completed"),        val:apList.filter(a=>a.status==="Completed").length,icon:"✅",accent:T.greenBg},
   ].map((s,i)=>(
           <Card key={s.label} cls={`fade-up stagger-${i+1}`} style={{padding:isMobile?"14px 16px":"20px 22px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -310,10 +322,10 @@ function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userI
 
       <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1.9fr 1fr",gap:18,marginBottom:18}}>
         <Card cls="fade-up stagger-2" style={{padding:0,overflow:"hidden"}}>
-          <div style={{padding:"20px 24px 14px"}}><H size={20}>Upcoming Appointments</H></div>
+          <div style={{padding:"20px 24px 14px"}}><H size={20}>{tr_("dash_upcoming")}</H></div>
           <Div/>
           {upcoming.length===0
-            ?<div style={{padding:28,textAlign:"center",color:T.muted}}>No upcoming appointments.</div>
+            ?<div style={{padding:28,textAlign:"center",color:T.muted}}>{tr_("dash_no_upcoming")}</div>
             :upcoming.map((ap,i)=>{
               const p=ap.patient||patients[ap.patientId];
               return(
@@ -330,7 +342,7 @@ function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userI
                       <div style={{fontSize:13,fontWeight:500,color:T.text2}}>{fmtD(ap.dt)}</div>
                       <div style={{fontSize:12,color:T.muted}}>{fmtT(ap.dt)}</div>
                     </div>
-                    <Sbadge status={ap.status}/>
+                    <Sbadge status={ap.status} t={t}/>
                   </div>
                 </div>
               );
@@ -338,7 +350,7 @@ function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userI
         </Card>
 
         <Card cls="fade-up stagger-3" style={{padding:0,overflow:"hidden"}}>
-          <div style={{padding:"20px 22px 14px"}}><H size={20}>Recall Alerts</H></div>
+          <div style={{padding:"20px 22px 14px"}}><H size={20}>{tr_("dash_recall_alerts")}</H></div>
           <Div/>
           {pendingR.length===0
             ?<div style={{padding:24,textAlign:"center",color:T.muted,fontSize:14}}>No pending recalls.</div>
@@ -376,7 +388,7 @@ function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userI
                     <div style={{margin:"6px auto 0",display:"flex",justifyContent:"center"}}><Av name={p?.name||"?"} size={26}/></div>
                     <div style={{fontSize:12,fontWeight:600,marginTop:4}}>{p?.name?.split(" ")[0]}</div>
                     <div style={{fontSize:11,color:T.muted,marginTop:2}}>{ap.service}</div>
-                    <Sbadge status={ap.status}/>
+                    <Sbadge status={ap.status} t={t}/>
                   </div>
                 </div>
               );
@@ -389,7 +401,8 @@ function Dashboard({patients,appointments,recalls,invoices=[],userFullName,userI
 }
 
 /* ════════════════════════════════════════════════ APPOINTMENTS */
-function Appointments({patients,appointments,patchAppt,sendWAMessage,toast,canSeeClinical,addRecall,isMobile}){
+function Appointments({patients,appointments,patchAppt,sendWAMessage,toast,canSeeClinical,addRecall,isMobile,t}){
+  const tr_ = t || ((k)=>k);
   const[view,setView]=useState("Today");
   const[selId,setSelId]=useState(null);
   const[saving,setSaving]=useState(false);
@@ -439,7 +452,7 @@ function Appointments({patients,appointments,patchAppt,sendWAMessage,toast,canSe
       {recallModal&&<AutoRecallModal appointment={recallModal.appointment} patient={recallModal.patient} onConfirm={confirmRecall} onDismiss={()=>setRecallModal(null)}/>}
 
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24,flexWrap:"wrap",gap:12}}>
-        <H size={30}>Appointments</H>
+        <H size={30}>{tr_("ap_title")}</H>
         <Tabs opts={["Today","Tomorrow","All"]} val={view} onChange={setView}/>
       </div>
 
@@ -461,7 +474,7 @@ function Appointments({patients,appointments,patchAppt,sendWAMessage,toast,canSe
                     <div style={{display:"flex",gap:10,alignItems:"center"}}>
                       <Av name={p?.name||"?"} size={36}/><div><div style={{fontWeight:600,fontSize:14}}>{p?.name||"Unknown"}</div><div style={{fontSize:12,color:T.muted}}>{p?.phone}</div></div>
                     </div>
-                    <Sbadge status={ap.status}/>
+                    <Sbadge status={ap.status} t={t}/>
                   </div>
                   <div style={{display:"flex",gap:14,fontSize:12,color:T.muted,paddingLeft:46}}>
                     <span>📅 {fmtD(ap.dt)}</span><span>🕐 {fmtT(ap.dt)}</span><span>{ap.service}</span>
@@ -475,7 +488,7 @@ function Appointments({patients,appointments,patchAppt,sendWAMessage,toast,canSe
                   <div><div style={{fontSize:13,fontWeight:500}}>{fmtD(ap.dt)}</div><div style={{fontSize:11,color:T.muted}}>{fmtT(ap.dt)}</div></div>
                   <div style={{fontSize:13,color:T.text2}}>{ap.service}</div>
                   <div style={{fontSize:12,color:T.muted}}>{ap.dentist.split(" ").slice(0,2).join(" ")}</div>
-                  <Sbadge status={ap.status}/>
+                  <Sbadge status={ap.status} t={t}/>
                 </div>
               );
             })}
@@ -489,7 +502,7 @@ function Appointments({patients,appointments,patchAppt,sendWAMessage,toast,canSe
               <H size={20} style={{color:"#fff",marginTop:11}}>{selP?.name}</H>
               <div style={{fontSize:12,color:"rgba(255,255,255,0.55)",marginTop:3}}>📞 {selP?.phone}</div>
               {selP?.age&&<div style={{fontSize:12,color:"rgba(255,255,255,0.45)",marginTop:2}}>{selP.age} yrs · {selP.gender||""}</div>}
-              <div style={{marginTop:9}}><Sbadge status={sel.status}/></div>
+              <div style={{marginTop:9}}><Sbadge status={sel.status} t={t}/></div>
             </div>
             <div style={{padding:"18px 20px"}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
@@ -524,7 +537,8 @@ function Appointments({patients,appointments,patchAppt,sendWAMessage,toast,canSe
 }
 
 /* ════════════════════════════════════════════════ NEW APPOINTMENT */
-function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobile,dentists=[],services=[],categories=[],patchPatient}){
+function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobile,dentists=[],services=[],categories=[],patchPatient,t}){
+  const tr_ = t || ((k)=>k);
   // Build active lists (fall back to hardcoded constants if DB empty — first-run safety)
   const dentistList = (dentists||[]).filter(d=>d.isActive).map(d=>d.name);
   const dentistOptions = dentistList.length ? dentistList : DENTISTS;
@@ -585,38 +599,38 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
 
   return(
     <div className="fade-up">
-      <H size={30} style={{marginBottom:24}}>New Appointment</H>
+      <H size={30} style={{marginBottom:24}}>{tr_("na_title")}</H>
       <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:18,marginBottom:16}}>
         <Card style={{padding:isMobile?"16px 14px":"24px 26px"}}>
-          <H size={18} style={{marginBottom:16}}>Patient</H>
+          <H size={18} style={{marginBottom:16}}>{tr_("na_patient")}</H>
           <div style={{display:"flex",gap:8,marginBottom:18}}>
-            {["Existing","New"].map(m=><Btn key={m} v={mode===m?"dark":"ghost"} sm onClick={()=>{setMode(m);setErrors({});}}>{m} Patient</Btn>)}
+            {[["Existing","na_existing"],["New","na_new"]].map(([m,k])=><Btn key={m} v={mode===m?"dark":"ghost"} sm onClick={()=>{setMode(m);setErrors({});}}>{tr_(k)}</Btn>)}
           </div>
           {mode==="Existing"
             ?pList.length===0?<div style={{color:T.muted,fontSize:14}}>No patients yet. Switch to New.</div>
-              :<Sel label="Select Patient" value={pid} onChange={e=>setPid(e.target.value)}>{pList.map(p=><option key={p.id} value={p.id}>{p.name} — {p.phone}</option>)}</Sel>
+              :<Sel label={tr_("na_selectPatient")} value={pid} onChange={e=>setPid(e.target.value)}>{pList.map(p=><option key={p.id} value={p.id}>{p.name} — {p.phone}</option>)}</Sel>
             :<div style={{display:"flex",flexDirection:"column",gap:14}}>
-              <div><Inp label="Full Name *" value={name} onChange={e=>{setName(e.target.value);setErrors(v=>({...v,name:null}));}} placeholder="e.g. Sara Mohamed"/>{errors.name&&<div style={{color:T.red,fontSize:12,marginTop:4}}>{errors.name}</div>}</div>
-              <div><Inp label="Phone *" value={phone} onChange={e=>{setPhone(e.target.value);setErrors(v=>({...v,phone:null}));}} placeholder="01012345678"/>{errors.phone&&<div style={{color:T.red,fontSize:12,marginTop:4}}>{errors.phone}</div>}{phone&&<div style={{fontSize:11,color:T.muted,marginTop:4}}>WhatsApp → {toWA(phone)}</div>}</div>
+              <div><Inp label={`${tr_("na_fullName")} *`} value={name} onChange={e=>{setName(e.target.value);setErrors(v=>({...v,name:null}));}} placeholder="e.g. Sara Mohamed"/>{errors.name&&<div style={{color:T.red,fontSize:12,marginTop:4}}>{errors.name}</div>}</div>
+              <div><Inp label={`${tr_("na_phone")} *`} value={phone} onChange={e=>{setPhone(e.target.value);setErrors(v=>({...v,phone:null}));}} placeholder="01012345678"/>{errors.phone&&<div style={{color:T.red,fontSize:12,marginTop:4}}>{errors.phone}</div>}{phone&&<div style={{fontSize:11,color:T.muted,marginTop:4}}>WhatsApp → {toWA(phone)}</div>}</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <Inp label="Age (optional)" type="number" value={age} onChange={e=>setAge(e.target.value)} placeholder="35"/>
-                <Sel label="Gender (optional)" value={gender} onChange={e=>setGender(e.target.value)}>
+                <Inp label={`${tr_("na_age")} ${tr_("optional")}`} type="number" value={age} onChange={e=>setAge(e.target.value)} placeholder="35"/>
+                <Sel label={`${tr_("na_gender")} ${tr_("optional")}`} value={gender} onChange={e=>setGender(e.target.value)}>
                   <option value="">—</option>
-                  <option>Male</option><option>Female</option><option>Child</option>
+                  <option value="Male">{tr_("na_g_male")}</option><option value="Female">{tr_("na_g_female")}</option><option value="Child">{tr_("na_g_child")}</option>
                 </Sel>
               </div>
-              <Txta label="Notes (optional)" value={pnotes} onChange={e=>setPnotes(e.target.value)} placeholder="Allergies, anxiety, preferences…" style={{height:72}}/>
+              <Txta label={`${tr_("na_notes")} ${tr_("optional")}`} value={pnotes} onChange={e=>setPnotes(e.target.value)} placeholder="Allergies, anxiety, preferences…" style={{height:72}}/>
             </div>
           }
         </Card>
         <Card style={{padding:isMobile?"16px 14px":"24px 26px"}}>
-          <H size={18} style={{marginBottom:16}}>Appointment Details</H>
+          <H size={18} style={{marginBottom:16}}>{tr_("na_apptDetails")}</H>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Inp label="Date" type="date" value={apDate} onChange={e=>setApDate(e.target.value)}/>
-              <Inp label="Time" type="time" value={apTime} onChange={e=>setApTime(e.target.value)}/>
+              <Inp label={tr_("na_date")} type="date" value={apDate} onChange={e=>setApDate(e.target.value)}/>
+              <Inp label={tr_("na_time")} type="time" value={apTime} onChange={e=>setApTime(e.target.value)}/>
             </div>
-            <Sel label="Service" value={service} onChange={e=>setService(e.target.value)}>
+            <Sel label={tr_("na_service")} value={service} onChange={e=>setService(e.target.value)}>
               {serviceGroups
                 ? Object.entries(serviceGroups).map(([cat, list])=>(
                     <optgroup key={cat} label={cat}>
@@ -628,10 +642,10 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
                     :<option key={i}>{s}</option>)
               }
             </Sel>
-            <Sel label="Dentist" value={dentist} onChange={e=>setDentist(e.target.value)}>
+            <Sel label={tr_("na_dentist")} value={dentist} onChange={e=>setDentist(e.target.value)}>
               {dentistOptions.map(d=><option key={d}>{d}</option>)}
             </Sel>
-            <Inp label="Reception Notes (optional)" value={recNote} onChange={e=>setRecNote(e.target.value)} placeholder="Patient anxious, bring X-ray…"/>
+            <Inp label={`${tr_("na_recNotes")} ${tr_("optional")}`} value={recNote} onChange={e=>setRecNote(e.target.value)} placeholder="Patient anxious, bring X-ray…"/>
           </div>
         </Card>
       </div>
@@ -642,10 +656,10 @@ function NewAppt({patients,addPatient,addAppt,sendWAMessage,toast,setPage,isMobi
           <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,color:T.muted}}><input type="checkbox" checked={sendMsg} onChange={e=>setSendMsg(e.target.checked)}/> Send</label>
         </Card>
       )}
-      {!sendMsg&&<div style={{marginBottom:16}}><label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:14,color:T.muted}}><input type="checkbox" checked={sendMsg} onChange={e=>setSendMsg(e.target.checked)}/> Also send WhatsApp confirmation</label></div>}
+      {!sendMsg&&<div style={{marginBottom:16}}><label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:14,color:T.muted}}><input type="checkbox" checked={sendMsg} onChange={e=>setSendMsg(e.target.checked)}/> {tr_("na_sendWA")}</label></div>}
       <div style={{display:"flex",gap:12}}>
-        <Btn v="gold" onClick={submit} disabled={saving}>{saving?<><Spinner/> Saving…</>:"Save Appointment"}</Btn>
-        <Btn v="ghost" onClick={()=>setPage("Appointments")}>Cancel</Btn>
+        <Btn v="gold" onClick={submit} disabled={saving}>{saving?<><Spinner/> {tr_("saving")}</>:tr_("na_saveAppt")}</Btn>
+        <Btn v="ghost" onClick={()=>setPage("Appointments")}>{tr_("cancel")}</Btn>
       </div>
       {/* Intake prompt after creating a brand-new patient inline */}
       {intakePromptFor && !intakeOpen && (
@@ -1076,7 +1090,8 @@ function IntakePromptModal({patientName, onYes, onSkip}) {
 }
 
 
-function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatient,importPatients,toast,canSeeClinical,isMobile,role,canBrowsePatients}){
+function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatient,importPatients,toast,canSeeClinical,isMobile,role,canBrowsePatients,t}){
+  const tr_ = t || ((k)=>k);
   const[q,setQ]=useState("");
   const[selId,setSelId]=useState(null);
   const[tab,setTab]=useState("Overview");
@@ -1123,17 +1138,17 @@ function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatie
       {showImport && <ImportPatientsModal onClose={()=>setShowImport(false)} importPatients={importPatients} toast={toast}/>}
       {showAddOld && <AddOldPatientModal  onClose={()=>setShowAddOld(false)} addPatient={addPatient} toast={toast} onAdded={(p)=>setIntakePromptFor(p)}/>}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12,marginBottom:24}}>
-        <H size={30}>Patients</H>
+        <H size={30}>{tr_("pa_title")}</H>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          <Btn v="ghost" sm onClick={()=>setShowAddOld(true)}>+ Add Old Patient</Btn>
-          {role==="admin" && <Btn v="dark" sm onClick={()=>setShowImport(true)}>↥ Import Excel</Btn>}
+          <Btn v="ghost" sm onClick={()=>setShowAddOld(true)}>{tr_("pa_addOld")}</Btn>
+          {role==="admin" && <Btn v="dark" sm onClick={()=>setShowImport(true)}>↥ {tr_("pa_import")}</Btn>}
         </div>
       </div>
       <div style={{display:"grid",gridTemplateColumns:(!isMobile&&sel)?"1fr 400px":"1fr",gap:18,alignItems:"start"}}>
         <div>
           <div style={{position:"relative",marginBottom:13}}>
             <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",color:T.muted,pointerEvents:"none"}}>🔍</span>
-            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search by name, phone, or old ID…" style={{width:"100%",border:`1px solid ${T.border}`,borderRadius:12,padding:"11px 14px 11px 40px",fontSize:14,fontFamily:"Sora",background:T.white,outline:"none",color:T.text}}/>
+            <input value={q} onChange={e=>setQ(e.target.value)} placeholder={tr_("pa_search")} style={{width:"100%",border:`1px solid ${T.border}`,borderRadius:12,padding:"11px 14px 11px 40px",fontSize:14,fontFamily:"Sora",background:T.white,outline:"none",color:T.text}}/>
           </div>
           <div style={{fontSize:12,color:T.muted,marginBottom:8}}>{filtered.length} of {pList.length} patients</div>
           <Card style={{padding:0,overflow:"hidden"}}>
@@ -1178,9 +1193,9 @@ function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatie
                 )}
               </div>
               <div style={{display:"flex",borderBottom:`1px solid ${T.border}`}}>
-                {["Overview","Medical","Visits","Recalls"].map(t=>(
+                {[["Overview","pa_tab_overview"],["Medical","pa_tab_medical"],["Visits","pa_tab_visits"],["Recalls","pa_tab_recalls"]].map(([t,k])=>(
                   <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"12px 0",border:"none",cursor:"pointer",fontFamily:"Sora",fontSize:13,fontWeight:tab===t?600:400,color:tab===t?T.gold:T.muted,background:T.white,borderBottom:tab===t?`2px solid ${T.gold}`:"2px solid transparent",transition:"all 0.15s",position:"relative"}}>
-                    {t}
+                    {tr_(k)}
                     {t==="Medical" && sel?.intakeForm && computePatientFlags(sel.intakeForm).some(f=>f.level==="red") && <span style={{position:"absolute",top:8,right:"calc(50% - 24px)",width:6,height:6,background:T.red,borderRadius:"50%"}}/>}
                     {t==="Medical" && !sel?.intakeForm && <span style={{position:"absolute",top:8,right:"calc(50% - 24px)",width:6,height:6,background:T.amber,borderRadius:"50%"}}/>}
                   </button>
@@ -1202,7 +1217,7 @@ function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatie
                 {tab==="Visits"&&(selAps.length===0?<div style={{color:T.muted,fontSize:14,textAlign:"center",padding:"20px 0"}}>No visits yet.</div>:selAps.map(ap=>(
                   <div key={ap.id} style={{padding:"11px 0",borderBottom:`1px solid ${T.border}`}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                      <div style={{fontWeight:600,fontSize:14}}>{ap.service}</div><Sbadge status={ap.status}/>
+                      <div style={{fontWeight:600,fontSize:14}}>{ap.service}</div><Sbadge status={ap.status} t={t}/>
                     </div>
                     <div style={{fontSize:12,color:T.muted,marginTop:3}}>{fmtDT(ap.dt)} · {ap.dentist.split(" ").slice(0,2).join(" ")}</div>
                     {canSeeClinical&&ap.clinicalNote&&<div style={{fontSize:13,color:T.text2,marginTop:5,fontStyle:"italic"}}>{ap.clinicalNote}</div>}
@@ -1271,7 +1286,8 @@ function Patients({patients,appointments,recalls,patchPatient,addRecall,addPatie
 }
 
 /* ════════════════════════════════════════════════ FOLLOW-UPS */
-function Followups({patients,recalls,patchRecall,sendWAMessage,toast,isMobile}){
+function Followups({patients,recalls,patchRecall,sendWAMessage,toast,isMobile,t}){
+  const tr_ = t || ((k)=>k);
   const[filter,setFilter]=useState("Due Soon");
   const[saving,setSaving]=useState(null);
   const todayD=today();
@@ -1302,7 +1318,7 @@ function Followups({patients,recalls,patchRecall,sendWAMessage,toast,isMobile}){
   return(
     <div className="fade-up">
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24,flexWrap:"wrap",gap:12}}>
-        <H size={30}>Follow-ups & Recalls</H>
+        <H size={30}>{tr_("nav_followups")}</H>
         <Tabs opts={["Due Soon","Pending","All"]} val={filter} onChange={setFilter}/>
       </div>
       {rows.length===0
