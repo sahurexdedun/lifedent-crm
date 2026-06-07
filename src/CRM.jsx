@@ -1976,14 +1976,26 @@ function CloseInvoiceModal({invoice, onClose, closeInvoice, toast, t}){
 
   const handleClose=async(thenPrint=false)=>{
     setClosing(true);
+    // Open the print popup BEFORE awaiting closeInvoice, so we keep the
+    // user-gesture token Chrome needs to allow window.open without blocking.
+    const printWin = thenPrint ? window.open("", "_blank", "width=820,height=1000") : null;
+    if(thenPrint && !printWin){
+      setClosing(false);
+      toast("Pop-up blocked. Allow pop-ups for this site.");
+      return;
+    }
     try{
       const closed=await closeInvoice(invoice.id,paymentMethod);
-      toast(`Invoice ${closed.number} closed`);
-      if(thenPrint){
-        setTimeout(()=>printInvoice(closed,{name:closed.patientName,phone:closed.patientPhone,legacyId:closed.patientLegacyId}),200);
+      toast(`Invoice ${closed.number} closed${thenPrint?", opening print…":""}`);
+      if(printWin){
+        // Write directly into the already-open popup, no setTimeout dance
+        printInvoiceInto(printWin, closed, {name:closed.patientName,phone:closed.patientPhone,legacyId:closed.patientLegacyId});
       }
       onClose();
-    }catch(e){ toast(`Error: ${e.message}`); }
+    }catch(e){
+      toast(`Error: ${e.message}`);
+      if(printWin) try{ printWin.close(); }catch{}
+    }
     finally{ setClosing(false); }
   };
 
@@ -2049,7 +2061,10 @@ function Row({label,value,color,big}){
 }
 
 // Print invoice in a popup window with full Lifedent branding
-function printInvoice(inv, patient){
+// Build the invoice HTML. Fonts kept as `font-family` references only — no
+// Google Fonts @import so the popup renders + prints instantly (system fallback
+// fonts are used if the user doesn't already have Cormorant/Sora cached).
+function buildInvoiceHtml(inv, patient){
   const items = inv.items || [];
   const itemsHtml = items.map(it => `
     <tr>
@@ -2059,16 +2074,15 @@ function printInvoice(inv, patient){
       <td class="num">${fmtEGP(it.lineTotal)}</td>
     </tr>`).join("");
 
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Invoice ${inv.number}</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Invoice ${inv.number}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Sora:wght@300;400;500;600&display=swap');
     *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:'Sora',sans-serif;color:#1A1614;padding:32px;font-size:13px;background:#fff}
+    body{font-family:'Sora',-apple-system,system-ui,sans-serif;color:#1A1614;padding:32px;font-size:13px;background:#fff}
     .head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #B8832E}
     .logo{height:64px}
     .clinic{text-align:right;font-size:11px;color:#666;line-height:1.6}
-    h1{font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:600;color:#1A1614;margin-bottom:4px}
-    .num{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:#B8832E}
+    h1{font-family:'Cormorant Garamond',Georgia,serif;font-size:32px;font-weight:600;color:#1A1614;margin-bottom:4px}
+    .num{font-family:'Cormorant Garamond',Georgia,serif;font-size:18px;font-weight:600;color:#B8832E}
     .meta{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-bottom:24px}
     .label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#888;font-weight:600;margin-bottom:4px}
     .val{font-size:13px;color:#1A1614}
@@ -2076,11 +2090,11 @@ function printInvoice(inv, patient){
     th{text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#888;border-bottom:1px solid #ddd;font-weight:600}
     td{padding:11px 12px;border-bottom:1px solid #eee;vertical-align:top}
     td.qty,th.qty{text-align:center;width:60px}
-    td.num,th.num{text-align:right;font-family:'Cormorant Garamond',serif;font-weight:600;width:120px}
+    td.num,th.num{text-align:right;font-family:'Cormorant Garamond',Georgia,serif;font-weight:600;width:120px}
     .cat{font-size:10px;color:#888;margin-top:2px}
     .totals{margin-left:auto;width:280px;margin-top:14px}
     .totals .row{display:flex;justify-content:space-between;padding:6px 0;font-size:13px}
-    .totals .row.total{font-size:18px;font-weight:700;border-top:2px solid #1A1614;padding-top:10px;margin-top:8px;font-family:'Cormorant Garamond',serif;color:#B8832E}
+    .totals .row.total{font-size:18px;font-weight:700;border-top:2px solid #1A1614;padding-top:10px;margin-top:8px;font-family:'Cormorant Garamond',Georgia,serif;color:#B8832E}
     .pay{margin-top:30px;padding:14px 18px;background:#F5F0E6;border-radius:10px;font-size:12px;display:flex;justify-content:space-between}
     .pay strong{color:#B8832E}
     .footer{margin-top:40px;padding-top:18px;border-top:1px solid #eee;font-size:11px;color:#888;text-align:center;line-height:1.6}
@@ -2088,7 +2102,7 @@ function printInvoice(inv, patient){
   </style></head><body>
   <div class="head">
     <div>
-      <img src="${window.location.origin}/logo.png" class="logo" alt="Lifedent"/>
+      <img src="${window.location.origin}/logo.png" class="logo" alt="Lifedent" onerror="this.style.display='none'"/>
     </div>
     <div class="clinic">
       <strong style="color:#1A1614;font-size:13px;display:block;margin-bottom:4px">Lifedent Dental Clinic</strong>
@@ -2100,11 +2114,11 @@ function printInvoice(inv, patient){
   <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px">
     <div>
       <h1>Invoice</h1>
-      <div style="font-family:'Cormorant Garamond',serif;font-size:20px;color:#B8832E;font-weight:600">#${inv.number}</div>
+      <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:20px;color:#B8832E;font-weight:600">#${inv.number}</div>
     </div>
     <div style="text-align:right">
       <div class="label">Date</div>
-      <div class="val">${inv.paidAt.toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"})}</div>
+      <div class="val">${(inv.paidAt||new Date()).toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"})}</div>
     </div>
   </div>
 
@@ -2128,7 +2142,7 @@ function printInvoice(inv, patient){
     <div class="row total"><span>TOTAL</span><span>${fmtEGP(inv.total)}</span></div>
   </div>
 
-  <div class="pay"><span>Payment Method</span><strong>${escapeHtml(inv.paymentMethod)}</strong></div>
+  <div class="pay"><span>Payment Method</span><strong>${escapeHtml(inv.paymentMethod||"")}</strong></div>
   ${inv.notes?`<div style="margin-top:14px;padding:12px 16px;background:#FAF8F4;border-radius:8px;font-size:12px;color:#666"><strong style="color:#1A1614">Notes:</strong> ${escapeHtml(inv.notes)}</div>`:""}
 
   <div class="footer">
@@ -2136,12 +2150,41 @@ function printInvoice(inv, patient){
     شكراً لاختياركم عيادة لايف دنت لتجميل وزراعة الأسنان.
   </div>
 
-  <script>window.onload=()=>{setTimeout(()=>window.print(),250);};</script>
+  <script>
+    // Wait for the logo image to settle (success OR error) then print.
+    // No artificial setTimeout — fires the moment the layout is ready.
+    (function(){
+      var imgs = Array.from(document.images);
+      var pending = imgs.filter(i => !i.complete).length;
+      function go(){ try{ window.focus(); window.print(); }catch(e){} }
+      if(pending === 0){ go(); return; }
+      imgs.forEach(i => {
+        if(!i.complete){
+          i.addEventListener('load',  () => { pending--; if(pending<=0) go(); }, {once:true});
+          i.addEventListener('error', () => { pending--; if(pending<=0) go(); }, {once:true});
+        }
+      });
+      // Hard fallback after 1.5s in case an image hangs
+      setTimeout(go, 1500);
+    })();
+  </script>
   </body></html>`;
+}
 
+// Write invoice HTML into an already-open window (preferred — preserves user gesture).
+function printInvoiceInto(w, inv, patient){
+  if(!w) return;
+  const html = buildInvoiceHtml(inv, patient);
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
+// Convenience: open a popup AND fill it (used by the standalone 🖨 reprint button).
+function printInvoice(inv, patient){
   const w = window.open("", "_blank", "width=820,height=1000");
   if(!w){ alert("Pop-up blocked. Allow pop-ups to print."); return; }
-  w.document.open(); w.document.write(html); w.document.close();
+  printInvoiceInto(w, inv, patient);
 }
 function escapeHtml(s){ return String(s||"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
