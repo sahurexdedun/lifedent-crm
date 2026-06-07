@@ -2557,7 +2557,7 @@ function AdminServices({categories, services, addCategory, patchCategory, remove
 }
 
 /* ════════════════════════════════════════════════ MOBILE NAV */
-function MobileNav({page,setPage,recalls,invoices=[],onSignOut,role,t}){
+function MobileNav({page,setPage,recalls,invoices=[],onSignOut,role,t,lang,setLang}){
   const tr_ = t || ((k)=>k);
   const[more,setMore]=useState(false);
   const pendingR=Object.values(recalls).filter(r=>r.status==="Pending").length;
@@ -2612,8 +2612,14 @@ function MobileNav({page,setPage,recalls,invoices=[],onSignOut,role,t}){
               </button>
             ))}
             <div style={{marginTop:8,borderTop:`1px solid ${T.border}`,paddingTop:12}}>
+              {setLang && (
+                <div style={{display:"flex",gap:8,marginBottom:8}}>
+                  <button onClick={()=>setLang("en")} style={{flex:1,padding:"10px 0",border:`2px solid ${lang==="en"?T.gold:T.border}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"Sora",background:lang==="en"?`${T.gold}10`:T.white,color:lang==="en"?T.gold:T.muted}}>🌐 English</button>
+                  <button onClick={()=>setLang("ar")} style={{flex:1,padding:"10px 0",border:`2px solid ${lang==="ar"?T.gold:T.border}`,borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"Sora",background:lang==="ar"?`${T.gold}10`:T.white,color:lang==="ar"?T.gold:T.muted}}>العربية</button>
+                </div>
+              )}
               <button onClick={onSignOut} style={{display:"flex",alignItems:"center",gap:14,width:"100%",padding:"12px 16px",border:"none",background:"transparent",borderRadius:12,cursor:"pointer",fontFamily:"Sora",color:T.red}}>
-                <span style={{fontSize:20}}>🚪</span><span style={{fontSize:15,fontWeight:500}}>Sign Out</span>
+                <span style={{fontSize:20}}>🚪</span><span style={{fontSize:15,fontWeight:500}}>{(t||(k=>k))("signOut")}</span>
               </button>
             </div>
           </div>
@@ -2638,7 +2644,7 @@ const NAV=[
 ];
 const TOOTH=`url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 6 C20 6 12 13 12 22 C12 30 15 36 18 42 L21 54 C21 55.5 22.5 57 24 57 C25.5 57 27 55.5 27 54 L27 46 C27 44 28.5 42.5 30 42.5 C31.5 42.5 33 44 33 46 L33 54 C33 55.5 34.5 57 36 57 C37.5 57 39 55.5 39 54 L42 42 C45 36 48 30 48 22 C48 13 40 6 30 6Z' fill='white' fill-opacity='0.025'/%3E%3C/svg%3E")`;
 
-function Sidebar({page,setPage,patients,appointments,recalls,messages,invoices=[],onSignOut,role,t}){
+function Sidebar({page,setPage,patients,appointments,recalls,messages,invoices=[],onSignOut,role,t,lang,setLang}){
   const tr_ = t || ((k)=>k);
   const navLabelKey = {
     Dashboard:"nav_dashboard", Appointments:"nav_appointments", NewAppt:"nav_newAppt",
@@ -2676,7 +2682,13 @@ function Sidebar({page,setPage,patients,appointments,recalls,messages,invoices=[
             <span>{l}</span><span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:15,fontWeight:600,color:T.goldL}}>{v}</span>
           </div>
         ))}
-        <button onClick={onSignOut} style={{marginTop:12,width:"100%",padding:"8px 12px",background:"rgba(255,255,255,0.05)",border:"none",borderRadius:8,cursor:"pointer",fontSize:12,color:"rgba(255,255,255,0.4)",fontFamily:"Sora",display:"flex",alignItems:"center",gap:8}}>
+        {setLang && (
+          <div style={{display:"flex",gap:6,marginTop:14,padding:"4px",background:"rgba(255,255,255,0.04)",borderRadius:8}}>
+            <button onClick={()=>setLang("en")} style={{flex:1,padding:"6px 0",border:"none",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:"Sora",background:lang==="en"?`${T.gold}1A`:"transparent",color:lang==="en"?T.goldL:"rgba(255,255,255,0.45)"}}>🌐 EN</button>
+            <button onClick={()=>setLang("ar")} style={{flex:1,padding:"6px 0",border:"none",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:"Sora",background:lang==="ar"?`${T.gold}1A`:"transparent",color:lang==="ar"?T.goldL:"rgba(255,255,255,0.45)"}}>عربي</button>
+          </div>
+        )}
+        <button onClick={onSignOut} style={{marginTop:10,width:"100%",padding:"8px 12px",background:"rgba(255,255,255,0.05)",border:"none",borderRadius:8,cursor:"pointer",fontSize:12,color:"rgba(255,255,255,0.4)",fontFamily:"Sora",display:"flex",alignItems:"center",gap:8}}>
           🚪 <span>{tr_("signOut")}</span>
         </button>
       </div>
@@ -2758,7 +2770,7 @@ export default function CRM({ role="admin", userId="", canSeeClinical=true, user
     <>
       <style>{G}</style>
       <div style={{display:"flex",height:"100vh",fontFamily:"'Sora',sans-serif",overflow:"hidden"}}>
-        {!isMobile&&<Sidebar page={safePage} setPage={setPage} patients={patients} appointments={appointments} recalls={recalls} messages={messages} invoices={invoices} onSignOut={handleSignOut} role={role} t={t}/>}
+        {!isMobile&&<Sidebar page={safePage} setPage={setPage} patients={patients} appointments={appointments} recalls={recalls} messages={messages} invoices={invoices} onSignOut={handleSignOut} role={role} t={t} lang={lang} setLang={setLang}/>}
         <main style={{flex:"1 1 0",minWidth:0,width:0,overflowY:"auto",overflowX:"hidden",padding:isMobile?"20px 16px 100px":"34px 38px",background:T.bg}}>
           {safePage==="Dashboard"    && <Dashboard    {...sharedProps} userFullName={userFullName}/>}
           {safePage==="Appointments" && <Appointments {...sharedProps}/>}
@@ -2775,7 +2787,7 @@ export default function CRM({ role="admin", userId="", canSeeClinical=true, user
           {safePage==="Settings"     && <Settings     toast={showToast} lang={lang} setLang={setLang} t={t}/>}
         </main>
       </div>
-      {isMobile&&<MobileNav page={safePage} setPage={setPage} recalls={recalls} invoices={invoices} onSignOut={handleSignOut} role={role} t={t}/>}
+      {isMobile&&<MobileNav page={safePage} setPage={setPage} recalls={recalls} invoices={invoices} onSignOut={handleSignOut} role={role} t={t} lang={lang} setLang={setLang}/>}
       <Toast msg={toast} onClose={()=>setToast("")}/>
     </>
   );

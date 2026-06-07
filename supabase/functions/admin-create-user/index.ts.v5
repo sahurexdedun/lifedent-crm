@@ -126,13 +126,17 @@ Deno.serve(async (req) => {
           return j({ error: "Refusing to delete the last active admin" }, 400);
       }
 
-      // Delete from auth.users — profiles row cascades if FK has ON DELETE CASCADE
+      // Delete from auth.users. If the row is already gone (orphaned profile),
+      // that's fine — we still want to clean up the profile row.
       const { error: dErr } = await admin.auth.admin.deleteUser(userId);
-      if (dErr) return j({ error: dErr.message }, 400);
+      if (dErr && !/not.?found/i.test(dErr.message)) {
+        return j({ error: dErr.message }, 400);
+      }
 
-      // Best-effort cleanup if cascade isn't set up
-      await admin.from("profiles").delete().eq("id", userId).catch(()=>{});
-      return j({ ok: true });
+      // Always clean up the profile (in case the FK cascade isn't set up).
+      const { error: pErr } = await admin.from("profiles").delete().eq("id", userId);
+      if (pErr) return j({ error: `Auth deleted but profile cleanup failed: ${pErr.message}` }, 500);
+      return j({ ok: true, orphanCleanup: !!dErr });
     }
 
     return j({ error: `Unknown action: ${action}` }, 400);
