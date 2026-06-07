@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback } from "react";
 import * as db from "../lib/db";
 
-export function useClinicData() {
+export function useClinicData({ onRealtimeEvent } = {}) {
   const [patients,     setPatients]     = useState({});
   const [appointments, setAppointments] = useState({});
   const [recalls,      setRecalls]      = useState({});
@@ -51,25 +51,35 @@ export function useClinicData() {
 
   // ── Real-time subscriptions ──────────────────────────────────────────
   useEffect(() => {
-    const apSub = db.subscribeToAppointments(() => {
+    const apSub = db.subscribeToAppointments((payload) => {
       db.getAppointments().then(list =>
         setAppointments(Object.fromEntries(list.map(ap => [ap.id, ap])))
       );
+      onRealtimeEvent?.({ table: "appointments", payload });
     });
-    const rSub = db.subscribeToRecalls(() => {
+    const rSub = db.subscribeToRecalls((payload) => {
       db.getRecalls().then(list =>
         setRecalls(Object.fromEntries(list.map(r => [r.id, r])))
       );
+      onRealtimeEvent?.({ table: "recalls", payload });
     });
-    const iSub = db.subscribeToInvoices(() => {
+    const iSub = db.subscribeToInvoices((payload) => {
       db.getInvoices().then(setInvoices);
+      onRealtimeEvent?.({ table: "invoices", payload });
+    });
+    const pSub = db.subscribeToPatients((payload) => {
+      db.getPatients().then(list =>
+        setPatients(Object.fromEntries(list.map(p => [p.id, p])))
+      );
+      onRealtimeEvent?.({ table: "patients", payload });
     });
     return () => {
       apSub.unsubscribe?.();
       rSub.unsubscribe?.();
       iSub.unsubscribe?.();
+      pSub.unsubscribe?.();
     };
-  }, []);
+  }, [onRealtimeEvent]);
 
   // ── Patient mutations ────────────────────────────────────────────────
   const addPatient = useCallback(async (data) => {

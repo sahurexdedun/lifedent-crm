@@ -559,7 +559,14 @@ export function subscribeToRecalls(cb) {
   return supabase.channel("recall-changes")
     .on("postgres_changes", { event: "*", schema: "public", table: "recalls" }, cb).subscribe();
 }
+// Invoice subscription now passes the full Realtime payload so the hook can
+// inspect eventType + new row (e.g. fire a toast on freshly-inserted drafts).
 export function subscribeToInvoices(cb) {
   return supabase.channel("invoice-changes")
-    .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, cb).subscribe();
+    .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, payload => cb(payload))
+    .subscribe();
+}
+export function subscribeToPatients(cb) {
+  return supabase.channel("patient-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "patients" }, cb).subscribe();
 }

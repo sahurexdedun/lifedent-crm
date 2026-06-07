@@ -2774,6 +2774,55 @@ function Sidebar({page,setPage,patients,appointments,recalls,messages,invoices=[
 export default function CRM({ role="admin", userId="", canSeeClinical=true, userFullName="",
                               canBrowsePatients=true, canSeeRevenue=true,
                               canCloseInvoices=true, canCreateInvoices=true }){
+  const[page,setPage]=useState("Dashboard");
+  const[toast,setToast]=useState("");
+  const isMobile=useMobile();
+  const[lang,setLangState]=useState(()=>getStoredLang());
+  const setLang=useCallback((l)=>{ setStoredLang(l); setLangState(l); setI18nLang(l); document.documentElement.dir = isRTL(l)?"rtl":"ltr"; },[]);
+  useEffect(()=>{ setI18nLang(lang); document.documentElement.dir = isRTL(lang)?"rtl":"ltr"; },[lang]);
+  const t = useCallback((k)=>tr(k,lang),[lang]);
+  const showToast=useCallback(msg=>{setToast(msg);setTimeout(()=>setToast(""),3500);},[]);
+
+  // Audio ping (data-URI WAV, tiny). Plays for receptionist/admin when a new
+  // draft arrives via realtime. Browsers require a user gesture before audio
+  // can play — that's fine, the receptionist will have clicked at least once
+  // by the time the first realtime event lands. If audio is blocked, we
+  // silently ignore the error.
+  const playPing = useCallback(()=>{
+    try{
+      const a = new Audio("data:audio/wav;base64,UklGRhwMAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YfgLAAAAAB4Eyga/B5kHugUgAjP+sPpC+Cf3hPdY+Tb8mP/EArYE4QSLAr7+kvqq91v3LfvFAvUKQRGIE3oQbAgN/RPybOuV6/jx3vt2BkUNlw3MBkH7Vu/v6BfrYfPg/o0IjgyOCYAB0vfu8MTuxvFa9zX86vyy+IfwTugO5Pjk2OnA7yLzz/H47O3o7+kY8YL8sQc+DkkP1g0WDcgNZw5+DA0H1f80+RH3iPmS/xMHCw57E3wWFhWMDtoEcvxA+lcAEAyKGEsiQyXKHr8RIQME9vrt3uqJ7d/zffsdAwMJDQuABi/8Bu+e5BTif+nq96EHCxJlEwMNZAOG+l/0wPDR7sLuO/Au8RXvBOlF36vUz828zRTU695T55jpAegg5XPlMu0M+rEHJBHFFb0WqRZkF/MZIxx2GqQTOAk5/jr2pPSP+aoBdgrBE9scUiK2H/8VlggH/Lr0FfPP9JD3hPp5/Tn/yv5e/AT5gfa49o74IPrV+W/3FfP47YnplOeZ6gPx6vbF+I/22vEM7QbqUuo/7n31Vv5LBzcOlhFiESkPlw3GDqUR3RKADzgIIv96+Ev2tfgL/qcECwxCFLgbDR/lGoUO0/0n76Dn1ujz7+P5fwK3CIYLZAm1AqL5tPDn6mfqV+8t96r/UAYRCcAGCwBs+JLymPCu8WPzZ/SH8/3wU+776Ujr2u3T7yzwSO827xLwsfPF+f7/ggOLAv7+9vyA/h0DPwifClwIywPo/9X+EQHsBJYHRweYAt75DPGm6+jrIfP1/+wMthVwFkUOk/+98AHnLeYC7uH4mAOLCpQM4QgGAB/0pekJ5DjlQesF8/n4Pvtm+RH0M+5j6yPtZvIF+e79TgC0/4P9HfwH/Sn/cf+8/Iv5LPpHAJUKqxQfGM4Q3wHs8N/lZeQg6sLylvw5BgkM4Av6BG34lOzy5Q7n8u3F9jD8oPxn+Yj1tPLU8MfvA/Bm8VvyEvIQ8DDtxesz7lD0bvxoA9oG4QY7BiAHJAi8B8AFsAOaArQClwM+BDcDqgBn/r/+TwI0CCcOyRElEnIOhwbF+l3uM+W745Tqf/d6BicSORS3DTABDvLM5q/iouak75n5JwHDA0sBSPyZ9+rzS/D87KbsUvCB9pT75/wH+yT4MfdF+RP9LACyANL+8/sl+SP4Sfop/9YElwiPCWkH+gNlAdwBzwR4COMKEgppBacBnQDQAjAGCAfXAjP6JfHJ69bsM/Mv+wACfwUgBQYDAQHd/4P/V/9+/uX8x/oR+Wj4UPjC9w721/Mr8mTyBPVN+EH61PlA94f1m/Y3+gv++gC2AvkDgQQVA6T/6/vT+T/65vyfAB4FCQsHEm0XwhYjDtX8lOin1xPP+9HM3rDxYwROEX0WoBPCC7sBOPgU8GHpieMd4Hbho+iD9C8B7QnIDX0NUguXCEoG2QPgAFr+r/27/zoFcQ5tGoknqDIVOEs1tCm+E7n2tNc+v0Cy67kS0EHrnQcvIBgsACtRG+wDpu1535XYxOAW9DcOICf6PUNRTV9pYAFFx/p/lpQ0gQAAAA==");
+      a.volume = 0.35;
+      a.play().catch(()=>{});
+    }catch{}
+  },[]);
+
+  // Live notifications. Realtime fires for every change to invoices/patients/
+  // appointments/recalls. We only surface friendly toasts for events that
+  // matter cross-session: a new draft for receptionist, a draft we sent
+  // getting closed, and new appointments / patient adds.
+  const onRealtimeEvent = useCallback(({table, payload})=>{
+    if(!payload) return;
+    const evt = payload.eventType;
+    const nw  = payload.new;
+    const old = payload.old;
+    if(table === "invoices"){
+      // New DRAFT submitted (or any-to-draft change) — show to anyone who can close
+      if(evt === "INSERT" && nw?.status === "draft" && nw?.created_by !== userId
+         && ["admin","senior_doctor","receptionist"].includes(role)){
+        playPing();
+        showToast(`🔔 ${t("bi_pendingClose") || "Pending Closure"}: #${nw.invoice_number || ""} · ${nw.patient_name_snapshot || ""}`);
+      }
+      // A draft I created got closed by reception
+      if(evt === "UPDATE" && old?.status === "draft" && nw?.status === "paid"
+         && nw?.created_by === userId){
+        showToast(`✓ ${t("st_paid") || "Paid"}: #${nw.invoice_number || ""}`);
+      }
+    }
+    if(table === "appointments" && evt === "INSERT" && nw?.created_by !== userId){
+      showToast(`📅 ${t("nav_appointments") || "Appointments"}: ${nw.patient_name_snapshot || ""}`);
+    }
+  }, [role, userId, showToast, playPing, t]);
+
   const {
     patients, appointments, recalls, messages,
     dentists, categories, services, invoices,
@@ -2784,17 +2833,7 @@ export default function CRM({ role="admin", userId="", canSeeClinical=true, user
     addCategory, patchCategory, removeCategory,
     addService, patchService, removeService,
     addInvoice, closeInvoice,
-  } = useClinicData();
-
-  const[page,setPage]=useState("Dashboard");
-  const[toast,setToast]=useState("");
-  const isMobile=useMobile();
-  const[lang,setLangState]=useState(()=>getStoredLang());
-  const setLang=useCallback((l)=>{ setStoredLang(l); setLangState(l); setI18nLang(l); document.documentElement.dir = isRTL(l)?"rtl":"ltr"; },[]);
-  // Apply dir + helper lang on first render so SSR-style hydration matches
-  useEffect(()=>{ setI18nLang(lang); document.documentElement.dir = isRTL(lang)?"rtl":"ltr"; },[lang]);
-  const t = useCallback((k)=>tr(k,lang),[lang]);
-  const showToast=useCallback(msg=>{setToast(msg);setTimeout(()=>setToast(""),3500);},[]);
+  } = useClinicData({ onRealtimeEvent });
 
   const handleSignOut=async()=>{
     try{await signOut();}catch{}
