@@ -1524,16 +1524,32 @@ function ImportPatientsModal({onClose, importPatients, toast}){
       const wb=XLSX.read(buf,{type:"array"});
       const ws=wb.Sheets[wb.SheetNames[0]];
       const data=XLSX.utils.sheet_to_json(ws,{defval:""});
-      // Map flexible column names to our shape
+      // Map flexible column names (English + Arabic) to our shape
       const mapped=data.map(r=>{
-        const get=(...keys)=>{ for(const k of keys){ for(const ok of Object.keys(r)){ if(ok.toLowerCase().trim()===k) return r[ok]; } } return ""; };
+        const get=(...keys)=>{
+          for(const k of keys){
+            for(const ok of Object.keys(r)){
+              const okLow=ok.toString().toLowerCase().trim();
+              const okRaw=ok.toString().trim();
+              if(okLow===k || okRaw===k) return r[ok];
+            }
+          }
+          return "";
+        };
+        const dentist = get("dentist","primary dentist","doctor","اسم الطبيب","الطبيب").toString().trim();
+        // Combine notes with primary-dentist info so we don't lose it
+        const baseNotes = get("notes","note","ملاحظات").toString();
+        const notes = dentist
+          ? (baseNotes ? `${baseNotes} | Primary dentist: ${dentist}` : `Primary dentist: ${dentist}`)
+          : baseNotes;
         return {
-          name:    get("name","full name","patient name").toString(),
-          phone:   get("phone","mobile","mobile number","phone number","whatsapp").toString(),
-          legacyId:get("old patient id","old id","patient id","legacy id","id","clinic id").toString(),
-          age:     get("age").toString(),
-          gender:  get("gender","sex").toString(),
-          email:   get("email","e-mail").toString(),
+          name:    get("name","full name","patient name","اسم المريض","الاسم").toString(),
+          phone:   get("phone","mobile","mobile number","phone number","whatsapp","رقم الموبايل","رقم الهاتف","الهاتف","الموبايل").toString(),
+          legacyId:get("old patient id","old id","patient id","legacy id","id","clinic id","رقم الملف","الرقم").toString(),
+          age:     get("age","العمر").toString(),
+          gender:  get("gender","sex","النوع","الجنس").toString(),
+          email:   get("email","e-mail","البريد").toString(),
+          notes,
         };
       });
       setRows(mapped);

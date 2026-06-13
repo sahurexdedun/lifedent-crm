@@ -182,6 +182,7 @@ export async function bulkImportPatients(rows) {
     const age       = row.age ? Number(row.age) : null;
     const gender    = row.gender || null;
     const email     = (row.email || "").trim();
+    const notes     = (row.notes || "").toString().trim();
 
     if (!name) {
       result.errors.push({ row: idx + 2, reason: "Missing name" });
@@ -205,6 +206,7 @@ export async function bulkImportPatients(rows) {
       age: Number.isFinite(age) ? age : null,
       gender: ["Male", "Female", "Child"].includes(gender) ? gender : null,
       legacy_id: legacyId,
+      notes: notes || null,
       created_by: user.id,
     });
     phoneMap.set(rawPhone, { name, phone: rawPhone });
